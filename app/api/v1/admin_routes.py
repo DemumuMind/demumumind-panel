@@ -200,11 +200,26 @@ async def list_provider_keys(
     _: PanelDep,
     session: SessionDep,
 ) -> list[ProviderKeyOut]:
-    await _provider_or_404(session, provider_id)
+    provider = await _provider_or_404(session, provider_id)
     rows = await session.execute(
         select(ProviderKey).where(ProviderKey.provider_id == provider_id).order_by(ProviderKey.created_at)
     )
     out: list[ProviderKeyOut] = []
+    # primary key (Provider.api_key) is always listed first as "primary"
+    if provider.api_key:
+        masked = f"{provider.api_key[:6]}…{provider.api_key[-4:]}" if len(provider.api_key) > 12 else "…"
+        out.append(
+            ProviderKeyOut(
+                id="primary",
+                provider_id=provider_id,
+                api_key_masked=f"{masked} (primary)",
+                is_active=bool(provider.is_active),
+                last_used_at=None,
+                success_count=0,
+                fail_count=0,
+                created_at=provider.created_at,
+            )
+        )
     for pk in rows.scalars().all():
         masked = f"{pk.api_key[:6]}…{pk.api_key[-4:]}" if len(pk.api_key) > 12 else "…"
         out.append(

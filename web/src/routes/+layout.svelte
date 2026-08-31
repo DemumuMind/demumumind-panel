@@ -2,6 +2,8 @@
 	export const ssr = false;
 	import '../app.css';
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
+	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { base } from '$app/paths';
@@ -11,7 +13,22 @@
 
 	let { children }: { children?: import('svelte').Snippet } = $props();
 
-	onMount(() => { loadKey(); });
+	onMount(() => {
+		loadKey();
+		const key = get(panelKey);
+		const isLoginPage = window.location.pathname.replace(/\/+$/, '') === (base + '/login').replace(/\/+$/, '');
+		if (!key && !isLoginPage) {
+			goto(base + '/login');
+		}
+	});
+
+	afterNavigate(() => {
+		const key = get(panelKey);
+		const isLoginPage = get(page).url.pathname.replace(/\/+$/, '') === (base + '/login').replace(/\/+$/, '');
+		if (!key && !isLoginPage) {
+			goto(base + '/login');
+		}
+	});
 
 	let serverOk = $state(false);
 	let version = $state('');

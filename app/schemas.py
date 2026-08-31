@@ -101,6 +101,7 @@ class TestProviderResult(BaseModel):
 class DiscoveredModelStatus(BaseModel):
     internal_model: str
     ok: bool
+    category: Literal["ok", "premium", "error"] = "error"
     latency_ms: int | None = None
     error: str | None = None
 

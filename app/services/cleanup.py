@@ -63,6 +63,7 @@ async def run_cleanup(session: AsyncSession) -> CleanupReport:
             logger.info("cleanup.provider_deactivated", provider=provider.name, reason=type(exc).__name__)
 
     # 2. Models: count failures; deactivate only if repeatedly failing AND missing from listing.
+    #    Premium models (403 deposit/access_denied) are NEVER deactivated.
     models = (await session.execute(select(Model).where(Model.is_active == 1))).scalars().all()
     providers_map = {p.id: p for p in providers}
     for model in models:
@@ -70,9 +71,13 @@ async def run_cleanup(session: AsyncSession) -> CleanupReport:
         if provider_rec is None:
             continue
         meta = _load_meta(model.meta)
+        if meta.get("premium"):
+            continue  # premium models are not system errors
         status = await test_provider_model(provider_rec, model.internal_model, "cleanup")
-        if status.ok:
+        if status.ok or status.category == "premium":
             meta["test_fail_count"] = 0
+            if status.category == "premium":
+                meta["premium"] = True
             model.meta = json.dumps(meta)
             continue
         meta["test_fail_count"] = int(meta.get("test_fail_count", 0)) + 1

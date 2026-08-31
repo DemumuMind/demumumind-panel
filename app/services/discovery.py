@@ -7,8 +7,10 @@ discovered model gets a real minimal request to confirm it works.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import time
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from sqlalchemy import select
@@ -121,18 +123,51 @@ async def test_provider_model(
         latency_ms = int((time.monotonic() - start) * 1000)
         if resp.status_code < 400:
             await resp.aclose()
-            return DiscoveredModelStatus(internal_model=internal_model, ok=True, latency_ms=latency_ms)
-        text = resp.text[:1000]
+            return DiscoveredModelStatus(
+                internal_model=internal_model, ok=True, category="ok", latency_ms=latency_ms
+            )
+        text = resp.text[:2000]
         await resp.aclose()
-        decision = classify(resp.status_code, text)
+        error_msg = _extract_error(text, resp.status_code)
+        category: Literal["premium", "error"] = "error"
+        if resp.status_code in (401, 403) and _is_premium(text):
+            category = "premium"
         return DiscoveredModelStatus(
             internal_model=internal_model,
             ok=False,
-            error=f"{resp.status_code} {decision.category}",
+            category=category,
+            error=error_msg,
         )
     except Exception as exc:
         logger.warning("discovery.test_error", model=internal_model, error=type(exc).__name__)
-        return DiscoveredModelStatus(internal_model=internal_model, ok=False, error=type(exc).__name__)
+        return DiscoveredModelStatus(
+            internal_model=internal_model, ok=False, category="error", error=type(exc).__name__
+        )
+
+
+def _is_premium(body: str) -> bool:
+    lowered = body.lower()
+    hints = ("deposit", "premium", "access_denied", "restricted", "payment required", "insufficient balance")
+    return any(h in lowered for h in hints)
+
+
+def _extract_error(body: str, status_code: int) -> str:
+    """Extract a human-readable error message from the provider's response body."""
+    try:
+        parsed = json.loads(body)
+        if isinstance(parsed, dict):
+            err = parsed.get("error") or {}
+            if isinstance(err, dict):
+                msg = err.get("message") or err.get("code") or ""
+            elif isinstance(err, str):
+                msg = err
+            else:
+                msg = ""
+            if msg and isinstance(msg, str):
+                return msg[:200]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return f"HTTP {status_code}"
 
 
 async def discover_and_test(
@@ -141,28 +176,43 @@ async def discover_and_test(
     discovered = await discover_provider_models(provider, request_id)
     imported = 0
     skipped = 0
-    statuses: list[DiscoveredModelStatus] = []
+    model_ids: dict[str, Model] = {}
     for mid in discovered:
-        existing = await session.execute(
+        row = await session.execute(
             select(Model).where(
                 Model.provider_id == provider.id,
                 Model.user_model_id == mid,
             ).limit(1)
         )
-        if existing.scalar_one_or_none() is None:
-            session.add(
-                Model(
-                    provider_id=provider.id,
-                    user_model_id=mid,
-                    internal_model=mid,
-                    is_active=1,
-                    meta="{}",
-                )
+        existing = row.scalar_one_or_none()
+        if existing is None:
+            m = Model(
+                provider_id=provider.id,
+                user_model_id=mid,
+                internal_model=mid,
+                is_active=1,
+                meta="{}",
             )
+            session.add(m)
             imported += 1
+            model_ids[mid] = m
         else:
             skipped += 1
-        statuses.append(await test_provider_model(provider, mid, request_id))
+            model_ids[mid] = existing
+
+    # test all discovered models concurrently for speed
+    statuses = await asyncio.gather(*[test_provider_model(provider, mid, request_id) for mid in discovered])
+
+    # update premium flag in meta after tests
+    for mid, status in zip(discovered, statuses, strict=False):
+        if status.category == "premium":
+            model_obj = model_ids.get(mid)
+            if model_obj is not None:
+                mmeta = json.loads(model_obj.meta or "{}")
+                if not mmeta.get("premium"):
+                    mmeta["premium"] = True
+                    model_obj.meta = json.dumps(mmeta)
+
     await session.commit()
     await get_manager().refresh()
     logger.info(
@@ -179,7 +229,7 @@ async def discover_and_test(
         imported=imported,
         skipped=skipped,
         ok_count=sum(1 for s in statuses if s.ok),
-        models=statuses,
+        models=list(statuses),
     )
 
 

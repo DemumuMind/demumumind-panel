@@ -215,11 +215,17 @@
 									</h3>
 									<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1 max-h-64 overflow-auto">
 										{#each discoverResults[p.id].models as m}
-											<div class="flex items-center gap-2 rounded bg-zinc-800/60 px-2 py-1 text-xs">
-												<Badge variant={m.ok ? 'success' : 'danger'}>{m.ok ? 'ok' : 'err'}</Badge>
+											<div class="flex items-center gap-2 rounded bg-zinc-800/60 px-2 py-1 text-xs" title={m.error || m.internal_model}>
+												{#if m.category === 'premium'}
+													<Badge variant="warning">premium</Badge>
+												{:else}
+													<Badge variant={m.ok ? 'success' : 'danger'}>{m.ok ? 'ok' : 'err'}</Badge>
+												{/if}
 												<span class="text-zinc-300 truncate">{m.internal_model}</span>
 												{#if m.latency_ms}
 													<span class="text-zinc-500 ml-auto">{m.latency_ms}ms</span>
+												{:else if m.error}
+													<span class="text-zinc-500 ml-auto truncate max-w-32" title={m.error}>{m.error}</span>
 												{/if}
 											</div>
 										{/each}
