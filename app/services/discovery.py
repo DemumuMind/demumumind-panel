@@ -55,13 +55,21 @@ def parse_model_list(provider: Provider, data: dict[str, Any]) -> list[str]:
 
 async def discover_provider_models(provider: Provider, request_id: str) -> list[str]:
     pool = get_pool()
-    resp = await pool.request(
-        provider=provider,
-        path="models",
-        method="GET",
-        json_body=None,
-        request_id=request_id,
-    )
+    try:
+        resp = await pool.request(
+            provider=provider,
+            path="models",
+            method="GET",
+            json_body=None,
+            request_id=request_id,
+        )
+    except Exception as exc:
+        raise UpstreamError(
+            status_code=502,
+            message="Provider /models unreachable",
+            detail=type(exc).__name__,
+            request_id=request_id,
+        ) from exc
     if resp.status_code >= 400:
         body = resp.text[:2000]
         decision = classify(resp.status_code, body)
