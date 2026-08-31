@@ -7,6 +7,7 @@ structured error handlers. BIND_ADDR from config.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -26,11 +27,14 @@ from app.core.errors import register_error_handlers
 from app.core.redis import close_redis
 from app.schemas import ErrorResponse
 from app.seed import run_seed
+from app.services.cleanup import run_cleanup
 from app.services.hot_reload import get_hot_reload
 from app.services.pool import get_pool
 from app.services.provider_manager import get_manager
 
 logger = structlog.get_logger(__name__)
+
+CLEANUP_INTERVAL_SECONDS = 600  # 10 minutes
 
 
 @asynccontextmanager
@@ -42,8 +46,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await run_seed(session)
     await get_manager().refresh()
     await get_hot_reload().start()
+
+    # periodic cleanup task
+    async def _cleanup_loop() -> None:
+        while True:
+            try:
+                await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+                async with AsyncSessionLocal() as session:
+                    await run_cleanup(session)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("cleanup.loop_error")
+
+    cleanup_task = asyncio.create_task(_cleanup_loop())
     logger.info("app.startup.done")
     yield
+    cleanup_task.cancel()
     await get_hot_reload().stop()
     await get_pool().aclose()
     await close_redis()

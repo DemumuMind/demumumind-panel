@@ -71,6 +71,26 @@ export async function testProvider(id: string): Promise<{ ok: boolean; models: s
 	return postJSON(`/v1/admin/providers/${id}/test`, {});
 }
 
+export async function discoverProvider(id: string) {
+	return postJSON<any>(`/v1/admin/providers/${id}/discover`, {});
+}
+
+export async function fetchProviderKeys(id: string) {
+	return getJSON<any[]>(`/v1/admin/providers/${id}/keys`);
+}
+
+export async function addProviderKey(id: string, apiKey: string) {
+	return postJSON<any>(`/v1/admin/providers/${id}/keys`, { api_key: apiKey });
+}
+
+export async function deleteProviderKey(providerId: string, keyId: string) {
+	return del(`/v1/admin/providers/${providerId}/keys/${keyId}`);
+}
+
+export async function runCleanup() {
+	return postJSON<any>('/v1/admin/cleanup', {});
+}
+
 export async function fetchModels(limit = 100, offset = 0) {
 	return getJSON<{ items: any[]; total: number }>(`/v1/admin/models?limit=${limit}&offset=${offset}`);
 }

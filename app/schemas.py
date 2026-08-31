@@ -95,6 +95,56 @@ class TestProviderResult(BaseModel):
     message: str | None = None
 
 
+# --- Discovery / model workability ---
+
+
+class DiscoveredModelStatus(BaseModel):
+    internal_model: str
+    ok: bool
+    latency_ms: int | None = None
+    error: str | None = None
+
+
+class ModelDiscoveryResult(BaseModel):
+    provider_id: str
+    provider_name: str
+    total: int
+    imported: int
+    skipped: int
+    ok_count: int
+    models: list[DiscoveredModelStatus]
+
+
+# --- Provider key pool ---
+
+
+class CreateProviderKeyRequest(BaseModel):
+    api_key: str = Field(min_length=1, max_length=2000)
+
+
+class ProviderKeyOut(BaseModel):
+    id: str
+    provider_id: str
+    api_key_masked: str
+    is_active: bool
+    last_used_at: datetime | None
+    success_count: int
+    fail_count: int
+    created_at: datetime
+
+
+# --- Cleanup report ---
+
+
+class CleanupReport(BaseModel):
+    providers_deactivated: int
+    models_deactivated: int
+    groups_deleted: int
+    keys_deactivated: int
+    usage_deleted: int
+    warnings: list[str]
+
+
 # --- Models ---
 
 
@@ -300,6 +350,11 @@ __all__ = [
     "UpdateProviderRequest",
     "ProviderOut",
     "TestProviderResult",
+    "DiscoveredModelStatus",
+    "ModelDiscoveryResult",
+    "CreateProviderKeyRequest",
+    "ProviderKeyOut",
+    "CleanupReport",
     "CreateModelRequest",
     "UpdateModelRequest",
     "ModelOut",

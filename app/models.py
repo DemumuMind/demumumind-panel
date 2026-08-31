@@ -79,6 +79,7 @@ class Group(Base):
     )
     limit_enforcement: Mapped[str] = mapped_column(String, default="independent")
     model_slugs: Mapped[str] = mapped_column(Text, default="{}")
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
@@ -94,6 +95,7 @@ class ApiKey(Base):
     )
     model_mapping: Mapped[str] = mapped_column(Text, default="{}")
     monthly_budget: Mapped[float] = mapped_column(Float, default=0.0)
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
@@ -116,6 +118,7 @@ class McpServer(Base):
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     base_url: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
@@ -151,6 +154,24 @@ class AgentUsage(Base):
     )
 
 
+class ProviderKey(Base):
+    __tablename__ = "provider_keys"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    provider_id: Mapped[str] = mapped_column(
+        String, ForeignKey("providers.id", ondelete="CASCADE"), index=True
+    )
+    api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
+    weight: Mapped[int] = mapped_column(Integer, default=1)
+    last_used_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    success_count: Mapped[int] = mapped_column(Integer, default=0)
+    fail_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
+
+
 __all__ = [
     "Base",
     "Provider",
@@ -161,4 +182,5 @@ __all__ = [
     "McpServer",
     "McpPermission",
     "AgentUsage",
+    "ProviderKey",
 ]

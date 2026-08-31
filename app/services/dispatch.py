@@ -18,6 +18,7 @@ import structlog
 from app.core.errors import NotFoundError, UpstreamError
 from app.models import Provider
 from app.services.cache import get_cache
+from app.services.failover import classify
 from app.services.guardrails import get_guardrail
 from app.services.pool import get_pool
 from app.services.provider_manager import ResolvedModel, get_manager
@@ -60,14 +61,56 @@ def _tokens_from(data: dict[str, Any], protocol: str) -> tuple[int, int]:
     return int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
 
 
-def _to_provider(resolved: ResolvedModel) -> Provider:
+def _to_provider(resolved: ResolvedModel, api_key: str | None = None) -> Provider:
     return Provider(
         id=resolved.provider_id,
         name=resolved.provider_name,
         base_url=resolved.base_url,
-        api_key=resolved.api_key,
+        api_key=api_key or resolved.api_key,
         protocol=resolved.protocol,
     )
+
+
+async def _do_request(
+    resolved: ResolvedModel,
+    protocol: str,
+    target: str,
+    body: dict[str, Any],
+    request_id: str,
+    attempt: int = 0,
+) -> tuple[dict[str, Any], float]:
+    pool = get_pool()
+    manager = get_manager()
+    key = manager.pick_key(resolved.provider_id, attempt)
+    provider = _to_provider(resolved, key)
+    path = _provider_path(target, resolved.internal_model)
+    start = time.monotonic()
+    resp = await pool.request(
+        provider=provider,
+        path=path,
+        method="POST",
+        json_body=body,
+        request_id=request_id,
+    )
+    latency = time.monotonic() - start
+    if resp.status_code >= 400:
+        body_text = resp.text[:2000]
+        decision = classify(resp.status_code, body_text)
+        await resp.aclose()
+        if attempt == 0 and decision.rotate_key:
+            keys = manager.active_keys(resolved.provider_id)
+            if len(keys) > 1:
+                logger.info("dispatch.retry_rotate_key", provider=resolved.provider_name, attempt=1)
+                return await _do_request(resolved, protocol, target, body, request_id, attempt=1)
+        raise UpstreamError(
+            status_code=resp.status_code,
+            message=f"Upstream error ({decision.category})",
+            detail=body_text[:300],
+            request_id=request_id,
+        )
+    data = resp.json()
+    await resp.aclose()
+    return data, latency
 
 
 async def chat_completion(
@@ -98,28 +141,7 @@ async def chat_completion(
 
     target = normalize_protocol(resolved.protocol)
     translated = translate_request(protocol, target, body, resolved.internal_model)
-    pool = get_pool()
-    provider = _to_provider(resolved)
-    path = _provider_path(target, resolved.internal_model)
-    start = time.monotonic()
-    resp = await pool.request(
-        provider=provider,
-        path=path,
-        method="POST",
-        json_body=translated,
-        request_id=request_id,
-    )
-    if resp.status_code >= 400:
-        await resp.aclose()
-        raise UpstreamError(
-            status_code=resp.status_code,
-            message="Upstream provider error",
-            detail=resp.text[:300],
-            request_id=request_id,
-        )
-    data = resp.json()
-    await resp.aclose()
-    latency = time.monotonic() - start
+    data, latency = await _do_request(resolved, protocol, target, translated, request_id)
 
     output = translate_response(target, protocol, data)
     choice_content = (output.get("choices") or [{}])[0].get("message", {}).get("content")
@@ -157,7 +179,9 @@ async def chat_completion_stream(
     target = normalize_protocol(resolved.protocol)
     translated = translate_request(protocol, target, body, resolved.internal_model)
     pool = get_pool()
-    provider = _to_provider(resolved)
+    manager = get_manager()
+    key = manager.pick_key(resolved.provider_id)
+    provider = _to_provider(resolved, key)
     path = _provider_path(target, resolved.internal_model)
     start = time.monotonic()
     resp = await pool.request_stream(

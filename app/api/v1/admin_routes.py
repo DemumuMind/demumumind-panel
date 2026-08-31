@@ -21,21 +21,28 @@ from app.api.v1.middleware import AuthState, hash_key
 from app.config import settings
 from app.core.db import get_db
 from app.core.errors import AppError, NotFoundError
-from app.models import ApiKey, Model, Provider
+from app.models import ApiKey, Model, Provider, ProviderKey
 from app.schemas import (
     ApiKeyCreated,
     ApiKeyOut,
+    CleanupReport,
     CreateApiKeyRequest,
     CreateModelRequest,
+    CreateProviderKeyRequest,
     CreateProviderRequest,
+    DiscoveredModelStatus,
     LoginRequest,
+    ModelDiscoveryResult,
     ModelOut,
     PaginatedResponse,
     PluginOut,
+    ProviderKeyOut,
     ProviderOut,
     TestProviderResult,
 )
 from app.seed import run_seed
+from app.services.cleanup import run_cleanup
+from app.services.discovery import discover_and_test, test_provider_model
 from app.services.plugin_manager import get_plugin_manager
 from app.services.pool import get_pool
 from app.services.provider_manager import get_manager
@@ -162,6 +169,109 @@ async def test_provider(
     except Exception as exc:
         logger.warning("admin.provider_test_error", provider=provider_id, error=str(exc))
         return TestProviderResult(ok=False, models=[], message=str(exc)[:200])
+
+
+@admin_router.post("/providers/{provider_id}/discover", response_model=ModelDiscoveryResult)
+async def discover_provider_models_endpoint(
+    provider_id: str,
+    _: PanelDep,
+    session: SessionDep,
+    request: Request,
+) -> ModelDiscoveryResult:
+    provider = await _provider_or_404(session, provider_id)
+    return await discover_and_test(provider, session, getattr(request.state, "request_id", ""))
+
+
+@admin_router.post("/providers/{provider_id}/models/{internal_model}/test", response_model=DiscoveredModelStatus)
+async def test_single_model_endpoint(
+    provider_id: str,
+    internal_model: str,
+    _: PanelDep,
+    session: SessionDep,
+    request: Request,
+) -> DiscoveredModelStatus:
+    provider = await _provider_or_404(session, provider_id)
+    return await test_provider_model(provider, internal_model, getattr(request.state, "request_id", ""))
+
+
+@admin_router.get("/providers/{provider_id}/keys", response_model=list[ProviderKeyOut])
+async def list_provider_keys(
+    provider_id: str,
+    _: PanelDep,
+    session: SessionDep,
+) -> list[ProviderKeyOut]:
+    await _provider_or_404(session, provider_id)
+    rows = await session.execute(
+        select(ProviderKey).where(ProviderKey.provider_id == provider_id).order_by(ProviderKey.created_at)
+    )
+    out: list[ProviderKeyOut] = []
+    for pk in rows.scalars().all():
+        masked = f"{pk.api_key[:6]}…{pk.api_key[-4:]}" if len(pk.api_key) > 12 else "…"
+        out.append(
+            ProviderKeyOut(
+                id=pk.id,
+                provider_id=pk.provider_id,
+                api_key_masked=masked,
+                is_active=bool(pk.is_active),
+                last_used_at=pk.last_used_at,
+                success_count=pk.success_count,
+                fail_count=pk.fail_count,
+                created_at=pk.created_at,
+            )
+        )
+    return out
+
+
+@admin_router.post("/providers/{provider_id}/keys", response_model=ProviderKeyOut, status_code=201)
+async def add_provider_key(
+    provider_id: str,
+    _: PanelDep,
+    session: SessionDep,
+    body: CreateProviderKeyRequest,
+) -> ProviderKeyOut:
+    await _provider_or_404(session, provider_id)
+    pk = ProviderKey(provider_id=provider_id, api_key=body.api_key)
+    session.add(pk)
+    await session.commit()
+    await session.refresh(pk)
+    await get_manager().refresh()
+    masked = f"{pk.api_key[:6]}…{pk.api_key[-4:]}" if len(pk.api_key) > 12 else "…"
+    logger.info("admin.provider_key_added", provider=provider_id, prefix=body.api_key[:6])
+    return ProviderKeyOut(
+        id=pk.id,
+        provider_id=pk.provider_id,
+        api_key_masked=masked,
+        is_active=bool(pk.is_active),
+        last_used_at=pk.last_used_at,
+        success_count=pk.success_count,
+        fail_count=pk.fail_count,
+        created_at=pk.created_at,
+    )
+
+
+@admin_router.delete("/providers/{provider_id}/keys/{key_id}")
+async def delete_provider_key(
+    provider_id: str,
+    key_id: str,
+    _: PanelDep,
+    session: SessionDep,
+) -> dict[str, bool]:
+    await _provider_or_404(session, provider_id)
+    row = await session.execute(
+        select(ProviderKey).where(ProviderKey.id == key_id, ProviderKey.provider_id == provider_id).limit(1)
+    )
+    pk = row.scalar_one_or_none()
+    if pk is None:
+        raise NotFoundError(message=f"Provider key not found: {key_id}")
+    await session.delete(pk)
+    await session.commit()
+    await get_manager().refresh()
+    return {"ok": True}
+
+
+@admin_router.post("/cleanup", response_model=CleanupReport)
+async def cleanup_endpoint(_: PanelDep, session: SessionDep) -> CleanupReport:
+    return await run_cleanup(session)
 
 
 @admin_router.get("/models")

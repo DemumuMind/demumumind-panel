@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import AsyncSessionLocal
-from app.models import ApiKey, Model, Provider
+from app.models import ApiKey, Model, Provider, ProviderKey
 from app.schemas import CreateModelRequest, CreateProviderRequest, PaginatedResponse
 
 logger = structlog.get_logger(__name__)
@@ -87,6 +87,8 @@ class ProviderManager:
         self._providers: dict[str, ProviderRecord] = {}
         self._models: dict[str, ModelRecord] = {}
         self._key_mappings: dict[str, dict[str, str]] = {}
+        self._provider_keys: dict[str, list[str]] = {}
+        self._rr_counter: dict[str, int] = {}
         self._lock = asyncio.Lock()
 
     async def load(self, session: AsyncSession) -> None:
@@ -105,6 +107,7 @@ class ProviderManager:
         providers = (await session.execute(select(Provider))).scalars().all()
         models = (await session.execute(select(Model))).scalars().all()
         keys = (await session.execute(select(ApiKey.key_hash, ApiKey.model_mapping))).all()
+        pool_keys = (await session.execute(select(ProviderKey).where(ProviderKey.is_active == 1))).scalars().all()
         self._providers = {p.id: ProviderRecord.from_orm(p) for p in providers}
         self._models = {m.user_model_id: ModelRecord.from_orm(m) for m in models}
         self._key_mappings = {}
@@ -112,9 +115,25 @@ class ProviderManager:
             mapping = json.loads(raw or "{}")
             if isinstance(mapping, dict):
                 self._key_mappings[kh] = {str(k): str(v) for k, v in mapping.items()}
+        self._provider_keys = {}
+        for pk in pool_keys:
+            self._provider_keys.setdefault(pk.provider_id, []).append(pk.api_key)
 
     def _provider(self, provider_id: str) -> ProviderRecord | None:
         return self._providers.get(provider_id)
+
+    def active_keys(self, provider_id: str) -> list[str]:
+        return self._provider_keys.get(provider_id, [])
+
+    def pick_key(self, provider_id: str, offset: int = 0) -> str | None:
+        """Round-robin key selection. offset is used for retry (next key)."""
+        keys = self.active_keys(provider_id)
+        if not keys:
+            provider = self._provider(provider_id)
+            return provider.api_key if provider else None
+        idx = (self._rr_counter.get(provider_id, 0) + offset) % len(keys)
+        self._rr_counter[provider_id] = (idx + 1) % len(keys)
+        return keys[idx]
 
     def resolve(self, user_model_id: str, key_hash: str | None = None) -> ResolvedModel | None:
         target = user_model_id
