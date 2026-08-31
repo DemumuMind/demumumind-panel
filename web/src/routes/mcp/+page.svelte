@@ -54,8 +54,9 @@
 			<option value="tools/call">tools/call</option>
 		</select>
 	</div>
-	<label class="text-xs text-zinc-500 block mb-1">Params (JSON)</label>
+	<label for="mcp-params" class="text-xs text-zinc-500 block mb-1">Params (JSON)</label>
 	<textarea
+		id="mcp-params"
 		class="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-3"
 		rows={4}
 		bind:value={params}

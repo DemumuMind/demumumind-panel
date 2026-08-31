@@ -52,8 +52,8 @@
 	<h2 class="text-sm font-semibold mb-3">Generate Key</h2>
 	<div class="flex flex-col sm:flex-row gap-3 items-end">
 		<div class="w-full sm:w-32">
-			<label class="text-xs text-zinc-500 block mb-1">Monthly budget (USD)</label>
-			<Input type="number" bind:value={budget} class="w-full" />
+			<label for="key-budget" class="text-xs text-zinc-500 block mb-1">Monthly budget (USD)</label>
+			<Input id="key-budget" type="number" bind:value={budget} class="w-full" />
 		</div>
 		<Button onclick={add} disabled={busy}>Generate</Button>
 	</div>

@@ -9,6 +9,8 @@
 	import Badge from '$lib/components/ui/badge.svelte';
 	import { health } from '$lib/api';
 
+	let { children }: { children?: import('svelte').Snippet } = $props();
+
 	onMount(() => { loadKey(); });
 
 	let serverOk = $state(false);
@@ -41,7 +43,7 @@
 <div class="flex flex-col xl:flex-row h-screen">
 <!-- mobile top bar -->
 <div class="xl:hidden flex items-center gap-3 px-4 py-3 border-b border-zinc-800 bg-[#121214] shrink-0">
-	<button onclick={() => (mobileOpen = !mobileOpen)} class="text-zinc-400 hover:text-zinc-200 p-1">
+	<button aria-label="Toggle menu" onclick={() => (mobileOpen = !mobileOpen)} class="text-zinc-400 hover:text-zinc-200 p-1">
 		<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
 		</svg>
@@ -73,7 +75,7 @@
 			<h1 class="text-lg font-bold text-indigo-400">DemumuMind</h1>
 			<p class="text-xs text-zinc-500">Panel v{version || '0.1.0'}</p>
 		</div>
-		<button onclick={closeSidebar} class="xl:hidden text-zinc-500 hover:text-zinc-300 p-1">
+		<button aria-label="Close menu" onclick={closeSidebar} class="xl:hidden text-zinc-500 hover:text-zinc-300 p-1">
 			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
 			</svg>
@@ -106,11 +108,18 @@
 
 <!-- overlay backdrop (mobile) -->
 {#if mobileOpen}
-	<div onclick={closeSidebar} class="xl:hidden fixed inset-0 z-30 bg-black/50"></div>
+	<div
+		role="button"
+		tabindex="-1"
+		aria-label="Close menu"
+		onclick={closeSidebar}
+		onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); closeSidebar(); } }}
+		class="xl:hidden fixed inset-0 z-30 bg-black/50"
+	></div>
 {/if}
 
 <main class="flex-1 overflow-auto p-4 sm:p-6">
-	<slot />
+	{@render children?.()}
 </main>
 </div>
 </div>

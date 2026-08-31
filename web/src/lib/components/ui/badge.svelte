@@ -1,5 +1,5 @@
 <script lang="ts">
-	let { variant = 'default', class: className = '' }: { variant?: 'default' | 'success' | 'danger'; class?: string } = $props();
+	let { children, variant = 'default', class: className = '' }: { children?: import('svelte').Snippet; variant?: 'default' | 'success' | 'danger'; class?: string } = $props();
 
 	const colors: Record<string, string> = {
 		default: 'bg-zinc-700 text-zinc-200',
@@ -9,5 +9,5 @@
 </script>
 
 <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium {colors[variant] || colors.default} {className}">
-	<slot />
+	{@render children?.()}
 </span>

@@ -63,16 +63,16 @@
 <Card class="mb-6">
 	<div class="flex flex-col sm:flex-row gap-3 mb-4 items-end">
 		<div class="flex-1 w-full">
-			<label class="text-xs text-zinc-500 block mb-1">Model</label>
-			<Select bind:value={selectedModel}>
+			<label for="pg-model" class="text-xs text-zinc-500 block mb-1">Model</label>
+			<Select id="pg-model" bind:value={selectedModel}>
 				{#each models as m}
 					<option value={m.user_model_id}>{m.user_model_id} ({m.provider?.name})</option>
 				{/each}
 			</Select>
 		</div>
 		<div class="w-full sm:w-24">
-			<label class="text-xs text-zinc-500 block mb-1">Temp</label>
-			<Input type="number" bind:value={temperature} min="0" max="2" step="0.1" />
+			<label for="pg-temp" class="text-xs text-zinc-500 block mb-1">Temp</label>
+			<Input id="pg-temp" type="number" bind:value={temperature} min="0" max="2" step="0.1" />
 		</div>
 	</div>
 
