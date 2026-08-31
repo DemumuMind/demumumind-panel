@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { panelKey, toastMessage, loadKey, clearKey } from '$lib/stores';
 	import Badge from '$lib/components/ui/badge.svelte';
 	import { health } from '$lib/api';
@@ -79,9 +80,9 @@
 	<nav class="flex-1 p-2 space-y-1">
 		{#each nav as item}
 			<a
-				href={item.href}
+				href={base + item.href}
 				onclick={closeSidebar}
-				class="block rounded-lg px-3 py-2 text-sm transition-colors {$page.url.pathname === item.href ? 'bg-indigo-600/20 text-indigo-300' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}"
+				class="block rounded-lg px-3 py-2 text-sm transition-colors {$page.url.pathname === base + item.href ? 'bg-indigo-600/20 text-indigo-300' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}"
 			>{item.label}</a>
 		{/each}
 	</nav>
