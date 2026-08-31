@@ -120,6 +120,20 @@ async def test_provider_model(
             json_body=body,
             request_id=request_id,
         )
+        # retry on 429 (provider burst limiting) with backoff, max 2 retries
+        attempts = 0
+        while resp.status_code == 429 and attempts < 2:
+            await resp.aclose()
+            await asyncio.sleep(0.5 * (attempts + 1))  # 0.5s, 1s
+            resp = await pool.request(
+                provider=provider,
+                path=path,
+                method="POST",
+                json_body=body,
+                request_id=request_id,
+            )
+            attempts += 1
+
         latency_ms = int((time.monotonic() - start) * 1000)
         if resp.status_code < 400:
             await resp.aclose()
@@ -129,9 +143,7 @@ async def test_provider_model(
         text = resp.text[:2000]
         await resp.aclose()
         error_msg = _extract_error(text, resp.status_code)
-        category: Literal["premium", "error"] = "error"
-        if resp.status_code in (401, 403) and _is_premium(text):
-            category = "premium"
+        category: Literal["premium", "error"] = "premium" if _is_premium(text) else "error"
         return DiscoveredModelStatus(
             internal_model=internal_model,
             ok=False,
@@ -147,7 +159,18 @@ async def test_provider_model(
 
 def _is_premium(body: str) -> bool:
     lowered = body.lower()
-    hints = ("deposit", "premium", "access_denied", "restricted", "payment required", "insufficient balance")
+    hints = (
+        "deposit",
+        "premium",
+        "access_denied",
+        "restricted",
+        "payment required",
+        "insufficient balance",
+        "credit",
+        "billing",
+        "balance=0",
+        "insufficient_quota",
+    )
     return any(h in lowered for h in hints)
 
 
@@ -200,8 +223,14 @@ async def discover_and_test(
             skipped += 1
             model_ids[mid] = existing
 
-    # test all discovered models concurrently for speed
-    statuses = await asyncio.gather(*[test_provider_model(provider, mid, request_id) for mid in discovered])
+    # test all discovered models with bounded concurrency (avoid provider 429)
+    sem = asyncio.Semaphore(4)
+
+    async def _test(mid: str) -> DiscoveredModelStatus:
+        async with sem:
+            return await test_provider_model(provider, mid, request_id)
+
+    statuses = list(await asyncio.gather(*[_test(mid) for mid in discovered]))
 
     # update premium flag in meta after tests
     for mid, status in zip(discovered, statuses, strict=False):
