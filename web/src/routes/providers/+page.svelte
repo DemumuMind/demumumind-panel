@@ -11,6 +11,7 @@
 		deleteProvider,
 		testProvider,
 		discoverProvider,
+		testProviderModel,
 		fetchProviderKeys,
 		addProviderKey,
 		deleteProviderKey
@@ -89,14 +90,37 @@
 	async function discover(id: string) {
 		busyDiscover[id] = true;
 		try {
-			const r = await discoverProvider(id);
+			const r = await discoverProvider(id);  // light: list + import
 			discoverResults[id] = r;
-			showToast(`Discover: ${r.total} models, ${r.ok_count} ok, imported ${r.imported}`, r.ok_count > 0 ? 'success' : 'info');
+			showToast(`Discover: ${r.total} models imported ${r.imported}`, 'success');
 			await load();
 		} catch (e: any) {
 			showToast(e.message, 'error');
 		} finally {
 			busyDiscover[id] = false;
+		}
+	}
+
+	async function testAll(id: string) {
+		busyDiscover[id] = true;
+		try {
+			const r = await discoverProvider(id, true);  // full real test sweep
+			discoverResults[id] = r;
+			showToast(`Test: ${r.ok_count}/${r.total} ok`, r.ok_count > 0 ? 'success' : 'info');
+			await load();
+		} catch (e: any) {
+			showToast(e.message, 'error');
+		} finally {
+			busyDiscover[id] = false;
+		}
+	}
+
+	async function testModel(providerId: string, modelName: string) {
+		try {
+			const r = await testProviderModel(providerId, modelName);
+			showToast(`${modelName}: ${r.ok ? 'ok' : r.error || 'failed'}`, r.ok ? 'success' : 'error');
+		} catch (e: any) {
+			showToast(e.message, 'error');
 		}
 	}
 
@@ -177,7 +201,10 @@
 					</td>
 					<td class="text-right space-x-2 whitespace-nowrap">
 						<button onclick={() => discover(p.id)} disabled={busyDiscover[p.id]} class="text-xs text-green-400 hover:text-green-300 disabled:opacity-50">
-							{busyDiscover[p.id] ? '…' : 'Discover & Test'}
+							{busyDiscover[p.id] ? '…' : 'Discover'}
+						</button>
+						<button onclick={() => testAll(p.id)} disabled={busyDiscover[p.id]} class="text-xs text-yellow-400 hover:text-yellow-300 disabled:opacity-50">
+							{busyDiscover[p.id] ? '…' : 'Test all'}
 						</button>
 						<button onclick={() => test(p.id)} class="text-xs text-indigo-400 hover:text-indigo-300">Test</button>
 						<button onclick={() => remove(p.id)} class="text-xs text-red-400 hover:text-red-300">Delete</button>
@@ -211,7 +238,7 @@
 								<!-- discover results -->
 								{#if discoverResults[p.id]}
 									<h3 class="text-xs font-semibold text-zinc-400 mt-3 mb-2">
-										Models — {discoverResults[p.id].ok_count}/{discoverResults[p.id].total} ok
+										Models — {discoverResults[p.id].total} found
 									</h3>
 									<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1 max-h-64 overflow-auto">
 										{#each discoverResults[p.id].models as m}
@@ -220,15 +247,18 @@
 													<Badge variant="warning">premium</Badge>
 												{:else if m.category === 'rate_limited'}
 													<Badge variant="warning">r.limit</Badge>
+												{:else if m.category === 'listed'}
+													<Badge variant="default">listed</Badge>
 												{:else}
 													<Badge variant={m.ok ? 'success' : 'danger'}>{m.ok ? 'ok' : 'err'}</Badge>
 												{/if}
 												<span class="text-zinc-300 truncate">{m.internal_model}</span>
 												{#if m.latency_ms}
 													<span class="text-zinc-500 ml-auto">{m.latency_ms}ms</span>
-												{:else if m.error}
-													<span class="text-zinc-500 ml-auto truncate max-w-32" title={m.error}>{m.error}</span>
+												{:else if m.error && m.category !== 'listed'}
+													<span class="text-zinc-500 ml-auto truncate max-w-24" title={m.error}>{m.error}</span>
 												{/if}
+												<button onclick={() => testModel(p.id, m.internal_model)} class="ml-1 text-indigo-400 hover:text-indigo-300">Test</button>
 											</div>
 										{/each}
 									</div>

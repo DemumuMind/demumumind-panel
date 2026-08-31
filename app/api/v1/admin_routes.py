@@ -177,9 +177,10 @@ async def discover_provider_models_endpoint(
     _: PanelDep,
     session: SessionDep,
     request: Request,
+    test: bool = Query(default=False),
 ) -> ModelDiscoveryResult:
     provider = await _provider_or_404(session, provider_id)
-    return await discover_and_test(provider, session, getattr(request.state, "request_id", ""))
+    return await discover_and_test(provider, session, getattr(request.state, "request_id", ""), test=test)
 
 
 @admin_router.post("/providers/{provider_id}/models/{internal_model}/test", response_model=DiscoveredModelStatus)

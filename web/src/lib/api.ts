@@ -71,8 +71,12 @@ export async function testProvider(id: string): Promise<{ ok: boolean; models: s
 	return postJSON(`/v1/admin/providers/${id}/test`, {});
 }
 
-export async function discoverProvider(id: string) {
-	return postJSON<any>(`/v1/admin/providers/${id}/discover`, {});
+export async function discoverProvider(id: string, test = false) {
+	return postJSON<any>(`/v1/admin/providers/${id}/discover${test ? '?test=1' : ''}`, {});
+}
+
+export async function testProviderModel(id: string, internalModel: string) {
+	return postJSON<any>(`/v1/admin/providers/${id}/models/${encodeURIComponent(internalModel)}/test`, {});
 }
 
 export async function fetchProviderKeys(id: string) {

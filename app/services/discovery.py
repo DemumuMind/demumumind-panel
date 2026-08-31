@@ -201,7 +201,7 @@ def _extract_error(body: str, status_code: int) -> str:
 
 
 async def discover_and_test(
-    provider: Provider, session: AsyncSession, request_id: str
+    provider: Provider, session: AsyncSession, request_id: str, test: bool = False
 ) -> ModelDiscoveryResult:
     discovered = await discover_provider_models(provider, request_id)
     imported = 0
@@ -230,7 +230,31 @@ async def discover_and_test(
             skipped += 1
             model_ids[mid] = existing
 
-    # test all discovered models with gentle pacing (providers 429 on bursts)
+    if not test:
+        # light discover: list + import only, no real requests (avoids provider 429 sweeps)
+        statuses = [
+            DiscoveredModelStatus(internal_model=mid, ok=True, category="listed") for mid in discovered
+        ]
+        await session.commit()
+        await get_manager().refresh()
+        logger.info(
+            "discovery.light_done",
+            provider=provider.name,
+            total=len(discovered),
+            imported=imported,
+            skipped=skipped,
+        )
+        return ModelDiscoveryResult(
+            provider_id=provider.id,
+            provider_name=provider.name,
+            total=len(discovered),
+            imported=imported,
+            skipped=skipped,
+            ok_count=len(discovered),
+            models=statuses,
+        )
+
+    # full test: gentle pacing (providers 429 on bursts)
     sem = asyncio.Semaphore(2)
 
     async def _test(mid: str) -> DiscoveredModelStatus:
