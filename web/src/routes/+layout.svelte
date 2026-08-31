@@ -55,6 +55,8 @@
 		{/if}
 		{#if $panelKey}
 			<button onclick={logout} class="text-xs text-zinc-500 hover:text-zinc-300">Logout</button>
+		{:else}
+			<a href={base + '/login'} class="text-xs text-indigo-400 hover:text-indigo-300">Login</a>
 		{/if}
 	</div>
 </div>
@@ -96,6 +98,8 @@
 		</div>
 		{#if $panelKey}
 			<button onclick={logout} class="text-xs text-zinc-500 hover:text-zinc-300">Logout</button>
+		{:else}
+			<a href={base + '/login'} class="text-xs text-indigo-400 hover:text-indigo-300">Login</a>
 		{/if}
 	</div>
 </aside>
