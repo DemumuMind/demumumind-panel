@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { saveKey } from '$lib/stores';
 	import Input from '$lib/components/ui/input.svelte';
 	import Button from '$lib/components/ui/button.svelte';
@@ -14,7 +15,7 @@
 		try {
 			await login(key);
 			saveKey(key);
-			goto('/');
+			goto(base || '/');
 		} catch (e: any) {
 			error = e.message || 'Login failed';
 		}

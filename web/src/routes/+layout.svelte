@@ -34,7 +34,7 @@
 		{ label: 'MCP', href: '/mcp' }
 	];
 
-	function logout() { clearKey(); goto('/login'); }
+	function logout() { clearKey(); goto(base + '/login'); }
 	function closeSidebar() { mobileOpen = false; }
 </script>
 
