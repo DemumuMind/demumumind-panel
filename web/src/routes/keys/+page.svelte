@@ -50,10 +50,10 @@
 
 <Card class="mb-6">
 	<h2 class="text-sm font-semibold mb-3">Generate Key</h2>
-	<div class="flex gap-3 items-end">
-		<div>
+	<div class="flex flex-col sm:flex-row gap-3 items-end">
+		<div class="w-full sm:w-32">
 			<label class="text-xs text-zinc-500 block mb-1">Monthly budget (USD)</label>
-			<Input type="number" bind:value={budget} class="w-32" />
+			<Input type="number" bind:value={budget} class="w-full" />
 		</div>
 		<Button onclick={add} disabled={busy}>Generate</Button>
 	</div>
@@ -66,7 +66,8 @@
 </Card>
 
 <Card>
-	<table class="w-full text-sm">
+	<div class="overflow-x-auto">
+	<table class="w-full text-sm min-w-[480px]">
 		<thead>
 			<tr class="text-left text-zinc-400 border-b border-zinc-800">
 				<th class="py-2">ID</th>
@@ -93,4 +94,5 @@
 			{/if}
 		</tbody>
 	</table>
+	</div>
 </Card>

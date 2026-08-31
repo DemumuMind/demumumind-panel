@@ -4,25 +4,22 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { panelKey, toastMessage, loadKey, clearKey, saveKey } from '$lib/stores';
+	import { panelKey, toastMessage, loadKey, clearKey } from '$lib/stores';
 	import Badge from '$lib/components/ui/badge.svelte';
 	import { health } from '$lib/api';
 
-	onMount(() => {
-		loadKey();
-	});
+	onMount(() => { loadKey(); });
 
 	let serverOk = $state(false);
 	let version = $state('');
+	let mobileOpen = $state(false);
 
 	onMount(async () => {
 		try {
 			const h = await health();
 			serverOk = h.status === 'ok';
 			version = h.version;
-		} catch {
-			serverOk = false;
-		}
+		} catch { serverOk = false; }
 	});
 
 	const nav = [
@@ -36,43 +33,81 @@
 		{ label: 'MCP', href: '/mcp' }
 	];
 
-	function logout() {
-		clearKey();
-		goto('/login');
-	}
+	function logout() { clearKey(); goto('/login'); }
+	function closeSidebar() { mobileOpen = false; }
 </script>
 
-<div class="flex h-screen">
-	<aside class="w-56 border-r border-zinc-800 bg-[#121214] flex flex-col shrink-0">
-		<div class="p-4 border-b border-zinc-800">
+<div class="flex flex-col xl:flex-row h-screen">
+<!-- mobile top bar -->
+<div class="xl:hidden flex items-center gap-3 px-4 py-3 border-b border-zinc-800 bg-[#121214] shrink-0">
+	<button onclick={() => (mobileOpen = !mobileOpen)} class="text-zinc-400 hover:text-zinc-200 p-1">
+		<svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+		</svg>
+	</button>
+	<h1 class="text-lg font-bold text-indigo-400">DemumuMind</h1>
+	<div class="ml-auto flex items-center gap-2">
+		{#if serverOk}
+			<span class="w-2 h-2 rounded-full bg-green-500"></span>
+		{:else}
+			<span class="w-2 h-2 rounded-full bg-red-500"></span>
+		{/if}
+		{#if $panelKey}
+			<button onclick={logout} class="text-xs text-zinc-500 hover:text-zinc-300">Logout</button>
+		{/if}
+	</div>
+</div>
+
+<!-- sidebar overlay (mobile) + sidebar (desktop) -->
+<div class="flex flex-1 overflow-hidden">
+<aside
+	class="xl:flex xl:flex-col xl:w-56 xl:border-r xl:border-zinc-800 xl:bg-[#121214] xl:shrink-0 xl:static
+		fixed inset-y-0 left-0 z-40 w-64 bg-[#121214] border-r border-zinc-800 transform transition-transform duration-200
+		{mobileOpen ? 'translate-x-0' : '-translate-x-full'} xl:translate-x-0"
+>
+	<div class="p-4 border-b border-zinc-800 flex items-center justify-between">
+		<div>
 			<h1 class="text-lg font-bold text-indigo-400">DemumuMind</h1>
 			<p class="text-xs text-zinc-500">Panel v{version || '0.1.0'}</p>
 		</div>
-		<nav class="flex-1 p-2 space-y-1">
-			{#each nav as item}
-				<a
-					href={item.href}
-					class="block rounded-lg px-3 py-2 text-sm transition-colors {$page.url.pathname === item.href ? 'bg-indigo-600/20 text-indigo-300' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}"
-					>{item.label}</a
-				>
-			{/each}
-		</nav>
-		<div class="p-3 border-t border-zinc-800">
-			<div class="flex items-center gap-2 mb-2">
-				{#if serverOk}
-					<Badge variant="success">Online</Badge>
-				{:else}
-					<Badge variant="danger">Offline</Badge>
-				{/if}
-			</div>
-			{#if $panelKey}
-				<button onclick={logout} class="text-xs text-zinc-500 hover:text-zinc-300">Logout</button>
+		<button onclick={closeSidebar} class="xl:hidden text-zinc-500 hover:text-zinc-300 p-1">
+			<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+			</svg>
+		</button>
+	</div>
+	<nav class="flex-1 p-2 space-y-1">
+		{#each nav as item}
+			<a
+				href={item.href}
+				onclick={closeSidebar}
+				class="block rounded-lg px-3 py-2 text-sm transition-colors {$page.url.pathname === item.href ? 'bg-indigo-600/20 text-indigo-300' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'}"
+			>{item.label}</a>
+		{/each}
+	</nav>
+	<div class="p-3 border-t border-zinc-800 hidden xl:block">
+		<div class="flex items-center gap-2 mb-2">
+			{#if serverOk}
+				<Badge variant="success">Online</Badge>
+			{:else}
+				<Badge variant="danger">Offline</Badge>
 			{/if}
 		</div>
-	</aside>
-	<main class="flex-1 overflow-auto p-6">
-		<slot />
-	</main>
+		{#if $panelKey}
+			<button onclick={logout} class="text-xs text-zinc-500 hover:text-zinc-300">Logout</button>
+		{/if}
+	</div>
+</aside>
+
+<!-- overlay backdrop (mobile) -->
+{#if mobileOpen}
+	<div onclick={closeSidebar} class="xl:hidden fixed inset-0 z-30 bg-black/50"></div>
+{/if}
+
+<main class="flex-1 overflow-auto p-4 sm:p-6">
+	<slot />
+</main>
+</div>
 </div>
 
 {#if $toastMessage}

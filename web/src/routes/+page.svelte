@@ -27,7 +27,7 @@
 <h1 class="text-2xl font-bold mb-6">Dashboard</h1>
 
 {#if h}
-	<div class="flex gap-4 mb-6">
+	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
 		<Card class="flex-1">
 			<div class="text-sm text-zinc-400">Status</div>
 			<div class="text-lg font-semibold mt-1">
@@ -53,7 +53,7 @@
 	</div>
 {/if}
 
-<div class="grid grid-cols-3 gap-4 mb-6">
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
 	<Card>
 		<div class="text-2xl font-bold">{providers}</div>
 		<div class="text-sm text-zinc-400">Providers</div>

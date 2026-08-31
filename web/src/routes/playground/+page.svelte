@@ -61,8 +61,8 @@
 <h1 class="text-2xl font-bold mb-6">Playground</h1>
 
 <Card class="mb-6">
-	<div class="flex gap-3 mb-4 items-end">
-		<div class="flex-1">
+	<div class="flex flex-col sm:flex-row gap-3 mb-4 items-end">
+		<div class="flex-1 w-full">
 			<label class="text-xs text-zinc-500 block mb-1">Model</label>
 			<Select bind:value={selectedModel}>
 				{#each models as m}
@@ -70,7 +70,7 @@
 				{/each}
 			</Select>
 		</div>
-		<div class="w-24">
+		<div class="w-full sm:w-24">
 			<label class="text-xs text-zinc-500 block mb-1">Temp</label>
 			<Input type="number" bind:value={temperature} min="0" max="2" step="0.1" />
 		</div>
@@ -96,7 +96,7 @@
 		</div>
 	{/each}
 
-	<div class="flex gap-3">
+	<div class="flex flex-col sm:flex-row gap-3">
 		<Button onclick={addMessage}>+ Message</Button>
 		<Button onclick={send} disabled={busy || !selectedModel}>{busy ? 'Sending…' : 'Send'}</Button>
 	</div>

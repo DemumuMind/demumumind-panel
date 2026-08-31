@@ -21,8 +21,8 @@
 	}
 </script>
 
-<div class="flex items-center justify-center h-full">
-	<Card class="w-96">
+<div class="flex items-center justify-center min-h-full p-4">
+	<Card class="w-full max-w-md mx-4 sm:w-96">
 		<h1 class="text-xl font-bold mb-2">DemumuMind</h1>
 		<p class="text-sm text-zinc-400 mb-4">Enter your Panel API Key</p>
 		{#if error}

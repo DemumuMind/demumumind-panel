@@ -51,7 +51,7 @@
 
 <Card class="mb-6">
 	<h2 class="text-sm font-semibold mb-3">Map user model → internal model</h2>
-	<div class="grid grid-cols-4 gap-3">
+	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
 		<Input placeholder="user_model_id (e.g. my-sonnet)" bind:value={userModelId} />
 		<Input placeholder="internal model (e.g. claude-3-5-sonnet)" bind:value={internalModel} />
 		<Select bind:value={providerId}>
@@ -64,7 +64,8 @@
 </Card>
 
 <Card>
-	<table class="w-full text-sm">
+	<div class="overflow-x-auto">
+	<table class="w-full text-sm min-w-[480px]">
 		<thead>
 			<tr class="text-left text-zinc-400 border-b border-zinc-800">
 				<th class="py-2">user_model_id</th>
@@ -89,4 +90,5 @@
 			{/if}
 		</tbody>
 	</table>
+	</div>
 </Card>

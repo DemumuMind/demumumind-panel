@@ -43,7 +43,7 @@
 
 <Card class="mb-6">
 	<h2 class="text-sm font-semibold mb-3">Upload .wasm Plugin</h2>
-	<div class="grid grid-cols-3 gap-3">
+	<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
 		<Input placeholder="Plugin name" bind:value={pluginName} />
 		<Input placeholder="Ed25519 signature (hex)" bind:value={pluginSignature} />
 		<input type="file" accept=".wasm" onchange={(e) => (file = (e.target as HTMLInputElement).files?.[0])} class="text-sm text-zinc-400 file:mr-3 file:rounded file:border-0 file:bg-zinc-800 file:px-3 file:py-1 file:text-sm file:text-zinc-200" />
@@ -52,7 +52,8 @@
 </Card>
 
 <Card>
-	<table class="w-full text-sm">
+	<div class="overflow-x-auto">
+	<table class="w-full text-sm min-w-[480px]">
 		<thead>
 			<tr class="text-left text-zinc-400 border-b border-zinc-800">
 				<th class="py-2">Name</th>
@@ -82,4 +83,5 @@
 			{/if}
 		</tbody>
 	</table>
+	</div>
 </Card>

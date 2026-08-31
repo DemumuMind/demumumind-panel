@@ -65,16 +65,16 @@
 
 <Card class="mb-6">
 	<h2 class="text-sm font-semibold mb-3">Add Provider</h2>
-	<div class="grid grid-cols-6 gap-3">
-		<Input placeholder="Name" bind:value={name} class="col-span-1" />
-		<Input placeholder="Base URL" bind:value={baseUrl} class="col-span-2" />
-		<Input type="password" placeholder="API Key (optional)" bind:value={apiKey} class="col-span-1" />
-		<Select bind:value={protocol} class="col-span-1">
+	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+		<Input placeholder="Name" bind:value={name} />
+		<Input placeholder="Base URL" bind:value={baseUrl} class="sm:col-span-2" />
+		<Input type="password" placeholder="API Key (optional)" bind:value={apiKey} />
+		<Select bind:value={protocol}>
 			<option value="openai">openai</option>
 			<option value="anthropic">anthropic</option>
 			<option value="gemini">gemini</option>
 		</Select>
-		<label class="flex items-center gap-2 text-sm text-zinc-400 col-span-1">
+		<label class="flex items-center gap-2 text-sm text-zinc-400">
 			<input type="checkbox" bind:checked={isDefault} /> Default
 		</label>
 	</div>
@@ -82,7 +82,8 @@
 </Card>
 
 <Card>
-	<table class="w-full text-sm">
+	<div class="overflow-x-auto">
+	<table class="w-full text-sm min-w-[500px]">
 		<thead>
 			<tr class="text-left text-zinc-400 border-b border-zinc-800">
 				<th class="py-2">Name</th>
@@ -114,4 +115,5 @@
 			{/if}
 		</tbody>
 	</table>
+	</div>
 </Card>

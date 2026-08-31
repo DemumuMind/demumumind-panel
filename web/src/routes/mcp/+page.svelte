@@ -45,7 +45,7 @@
 <p class="text-sm text-zinc-500 mb-4">JSON-RPC 2.0 test interface for MCP servers</p>
 
 <Card class="mb-6">
-	<div class="grid grid-cols-3 gap-3 mb-3">
+	<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
 		<Input placeholder="Server name" bind:value={serverName} />
 		<Input placeholder="Tool name (for tools/call)" bind:value={toolName} />
 		<select class="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100" bind:value={method}>
