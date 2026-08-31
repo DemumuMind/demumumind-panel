@@ -120,11 +120,11 @@ async def test_provider_model(
             json_body=body,
             request_id=request_id,
         )
-        # retry on 429 (provider burst limiting) with backoff, max 2 retries
+        # retry on 429 (provider rate limiting) with backoff, max 3 retries
         attempts = 0
-        while resp.status_code == 429 and attempts < 2:
+        while resp.status_code == 429 and attempts < 3:
             await resp.aclose()
-            await asyncio.sleep(0.5 * (attempts + 1))  # 0.5s, 1s
+            await asyncio.sleep(1.0 * (2**attempts))  # 1s, 2s, 4s
             resp = await pool.request(
                 provider=provider,
                 path=path,
@@ -142,6 +142,13 @@ async def test_provider_model(
             )
         text = resp.text[:2000]
         await resp.aclose()
+        if resp.status_code == 429:
+            return DiscoveredModelStatus(
+                internal_model=internal_model,
+                ok=False,
+                category="rate_limited",
+                error="rate limited (429)",
+            )
         error_msg = _extract_error(text, resp.status_code)
         category: Literal["premium", "error"] = "premium" if _is_premium(text) else "error"
         return DiscoveredModelStatus(
@@ -223,12 +230,14 @@ async def discover_and_test(
             skipped += 1
             model_ids[mid] = existing
 
-    # test all discovered models with bounded concurrency (avoid provider 429)
-    sem = asyncio.Semaphore(4)
+    # test all discovered models with gentle pacing (providers 429 on bursts)
+    sem = asyncio.Semaphore(2)
 
     async def _test(mid: str) -> DiscoveredModelStatus:
         async with sem:
-            return await test_provider_model(provider, mid, request_id)
+            status = await test_provider_model(provider, mid, request_id)
+            await asyncio.sleep(0.2)  # stagger
+            return status
 
     statuses = list(await asyncio.gather(*[_test(mid) for mid in discovered]))
 

@@ -218,6 +218,8 @@
 											<div class="flex items-center gap-2 rounded bg-zinc-800/60 px-2 py-1 text-xs" title={m.error || m.internal_model}>
 												{#if m.category === 'premium'}
 													<Badge variant="warning">premium</Badge>
+												{:else if m.category === 'rate_limited'}
+													<Badge variant="warning">r.limit</Badge>
 												{:else}
 													<Badge variant={m.ok ? 'success' : 'danger'}>{m.ok ? 'ok' : 'err'}</Badge>
 												{/if}
