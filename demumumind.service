@@ -1,0 +1,25 @@
+[Unit]
+Description=DemumuMind Panel (Enterprise AI Gateway)
+After=network.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=demumumind
+Group=demumumind
+WorkingDirectory=/opt/demumumind-panel
+ExecStart=/opt/demumumind-panel/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+EnvironmentFile=/opt/demumumind-panel/.env
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/demumumind-panel /var/lib/demumumind /var/log/demumumind
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

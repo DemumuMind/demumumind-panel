@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+:root {
+	--bg: #0f0f11;
+	--bg-card: #1a1a1e;
+	--bg-hover: #252529;
+	--border: #2c2c30;
+	--text: #e4e4e7;
+	--text-muted: #a1a1aa;
+	--accent: #6366f1;
+	--accent-hover: #818cf8;
+	--danger: #ef4444;
+	--success: #22c55e;
+}
+
+html, body {
+	margin: 0;
+	padding: 0;
+	background: var(--bg);
+	color: var(--text);
+	font-family: system-ui, -apple-system, sans-serif;
+}
+
+body {
+	min-height: 100vh;
+}
+
+* {
+	box-sizing: border-box;
+}

@@ -1,0 +1,189 @@
+"""Dispatch — orchestrates a single LLM call end-to-end.
+
+Flow: resolve -> guardrails.validate_input -> cache.get -> translate_request
+-> pool.request (with failover classify) -> translate_response ->
+guardrails.validate_output -> cache.set -> telemetry. Every path carries
+X-Request-ID; errors are AppError/UpstreamError values, never panics.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from collections.abc import AsyncIterator
+from typing import Any, cast
+
+import structlog
+
+from app.core.errors import NotFoundError, UpstreamError
+from app.models import Provider
+from app.services.cache import get_cache
+from app.services.guardrails import get_guardrail
+from app.services.pool import get_pool
+from app.services.provider_manager import ResolvedModel, get_manager
+from app.services.telemetry import record_latency, record_usage
+from app.services.translate import normalize_protocol, translate_request, translate_response
+
+logger = structlog.get_logger(__name__)
+
+
+def _provider_path(protocol: str, model: str) -> str:
+    proto = normalize_protocol(protocol)
+    if proto == "anthropic":
+        return "v1/messages"
+    if proto == "gemini":
+        return f"v1beta/models/{model}:generateContent"
+    return "chat/completions"
+
+
+def _extract_prompt(messages: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("text"):
+                    parts.append(str(block["text"]))
+    return "\n".join(parts)[:8000]
+
+
+def _tokens_from(data: dict[str, Any], protocol: str) -> tuple[int, int]:
+    usage = data.get("usage") or {}
+    proto = normalize_protocol(protocol)
+    if proto == "anthropic":
+        return int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+    if proto == "gemini":
+        um = data.get("usageMetadata") or {}
+        return int(um.get("promptTokenCount", 0)), int(um.get("candidatesTokenCount", 0))
+    return int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
+
+
+def _to_provider(resolved: ResolvedModel) -> Provider:
+    return Provider(
+        id=resolved.provider_id,
+        name=resolved.provider_name,
+        base_url=resolved.base_url,
+        api_key=resolved.api_key,
+        protocol=resolved.protocol,
+    )
+
+
+async def chat_completion(
+    *,
+    request_id: str,
+    key_hash: str,
+    agent_type: str,
+    protocol: str,
+    model: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    manager = get_manager()
+    resolved = manager.resolve(model, key_hash)
+    if resolved is None:
+        raise NotFoundError(message=f"Model not found: {model}", request_id=request_id)
+
+    prompt_text = _extract_prompt(body.get("messages") or [])
+    guardrail = get_guardrail()
+    guardrail.validate_input(prompt_text)
+
+    cache = get_cache()
+    tools = body.get("tools")
+    temperature = body.get("temperature")
+    cached = await cache.get(model, prompt_text, temperature, tools)
+    if cached is not None:
+        logger.info("dispatch.cache_hit", model=model, request_id=request_id)
+        return cast(dict[str, Any], json.loads(cached))
+
+    target = normalize_protocol(resolved.protocol)
+    translated = translate_request(protocol, target, body, resolved.internal_model)
+    pool = get_pool()
+    provider = _to_provider(resolved)
+    path = _provider_path(target, resolved.internal_model)
+    start = time.monotonic()
+    resp = await pool.request(
+        provider=provider,
+        path=path,
+        method="POST",
+        json_body=translated,
+        request_id=request_id,
+    )
+    if resp.status_code >= 400:
+        await resp.aclose()
+        raise UpstreamError(
+            status_code=resp.status_code,
+            message="Upstream provider error",
+            detail=resp.text[:300],
+            request_id=request_id,
+        )
+    data = resp.json()
+    await resp.aclose()
+    latency = time.monotonic() - start
+
+    output = translate_response(target, protocol, data)
+    choice_content = (output.get("choices") or [{}])[0].get("message", {}).get("content")
+    guardrail.validate_output(_extract_prompt([{"role": "assistant", "content": choice_content}]))
+
+    await cache.set(model, prompt_text, temperature, tools, json.dumps(output, ensure_ascii=False))
+
+    tokens_in, tokens_out = _tokens_from(data, target)
+    record_usage(tokens_in, tokens_out, 0.0, provider_id=resolved.provider_id, agent_type=agent_type)
+    record_latency(latency, provider_id=resolved.provider_id)
+    logger.info(
+        "dispatch.completed",
+        model=model,
+        provider=resolved.provider_name,
+        latency_ms=round(latency * 1000, 1),
+        request_id=request_id,
+    )
+    return output
+
+
+async def chat_completion_stream(
+    *,
+    request_id: str,
+    key_hash: str,
+    agent_type: str,
+    protocol: str,
+    model: str,
+    body: dict[str, Any],
+) -> AsyncIterator[bytes]:
+    manager = get_manager()
+    resolved = manager.resolve(model, key_hash)
+    if resolved is None:
+        raise NotFoundError(message=f"Model not found: {model}", request_id=request_id)
+
+    target = normalize_protocol(resolved.protocol)
+    translated = translate_request(protocol, target, body, resolved.internal_model)
+    pool = get_pool()
+    provider = _to_provider(resolved)
+    path = _provider_path(target, resolved.internal_model)
+    start = time.monotonic()
+    resp = await pool.request_stream(
+        provider=provider,
+        path=path,
+        method="POST",
+        json_body=translated,
+        request_id=request_id,
+    )
+    if resp.status_code >= 400:
+        body_text = resp.text[:2000]
+        await resp.aclose()
+        raise UpstreamError(
+            status_code=resp.status_code,
+            message="Upstream provider error",
+            detail=body_text[:300],
+            request_id=request_id,
+        )
+    try:
+        async for chunk in resp.aiter_bytes():
+            yield chunk
+    finally:
+        await resp.aclose()
+        record_latency(time.monotonic() - start, provider_id=resolved.provider_id)
+        record_usage(0, 0, 0.0, provider_id=resolved.provider_id, agent_type=agent_type)
+        logger.info("dispatch.stream_done", model=model, request_id=request_id)
+
+
+__all__ = ["chat_completion", "chat_completion_stream"]
