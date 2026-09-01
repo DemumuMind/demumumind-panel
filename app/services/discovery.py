@@ -335,6 +335,9 @@ def _merge_provider_meta(existing_meta: dict[str, Any], discovered_meta: dict[st
     if "free" in discovered_meta and existing_meta.get("free") != discovered_meta["free"]:
         existing_meta["free"] = discovered_meta["free"]
         changed = True
+    if "kind" in discovered_meta and existing_meta.get("kind") != discovered_meta["kind"]:
+        existing_meta["kind"] = discovered_meta["kind"]
+        changed = True
     limits = discovered_meta.get("limits")
     if isinstance(limits, dict):
         merged_limits = dict(existing_meta.get("limits") or {})
