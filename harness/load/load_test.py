@@ -81,8 +81,12 @@ class Stats:
         print("========================")
 
 
-async def do_chat(client: httpx.AsyncClient, base: str, key: str, model: str, stream: bool) -> Result:
+async def do_chat(client: httpx.AsyncClient, base: str, key: str, model: str, stream: bool, prompt_idx: int = 0) -> Result:
     body = json.loads(json.dumps(CHAT_BODY).replace("{model}", model))
+    # vary prompt so we hit the upstream (real generation), not only cache
+    body["messages"] = [
+        {"role": "user", "content": f"Question {prompt_idx}: list three planets and their moons. Answer in one line."}
+    ]
     headers = {"Authorization": f"Bearer {key}"}
     t0 = time.monotonic()
     try:
@@ -114,27 +118,6 @@ async def do_models(client: httpx.AsyncClient, base: str, key: str) -> Result:
         return Result("models", 0, 0, error=f"{type(exc).__name__}: {str(exc)[:80]}")
 
 
-async def worker(
-    idx: int,
-    base: str,
-    key: str,
-    model: str,
-    mix: list[str],
-    stats: Stats,
-    stop: asyncio.Event,
-) -> None:
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
-        while not stop.is_set():
-            kind = random.choice(mix)
-            if kind == "chat":
-                r = await do_chat(client, base, key, model, stream=False)
-            elif kind == "stream":
-                r = await do_chat(client, base, key, model, stream=True)
-            else:
-                r = await do_models(client, base, key)
-            stats.results.append(r)
-
-
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:8000")
@@ -164,7 +147,24 @@ async def main() -> None:
     await warm
 
     stats.start = time.monotonic()
-    workers = [asyncio.create_task(worker(i, args.base, args.key, args.model, mix, stats, stop)) for i in range(args.concurrency)]
+    counter = 0
+
+    async def _worker(idx: int) -> None:
+        nonlocal counter
+        async with httpx.AsyncClient(timeout=httpx.Timeout(90.0)) as client:
+            while not stop.is_set():
+                kind = random.choice(mix)
+                counter += 1
+                prompt_idx = counter % 1000
+                if kind == "chat":
+                    r = await do_chat(client, args.base, args.key, args.model, stream=False, prompt_idx=prompt_idx)
+                elif kind == "stream":
+                    r = await do_chat(client, args.base, args.key, args.model, stream=True, prompt_idx=prompt_idx)
+                else:
+                    r = await do_models(client, args.base, args.key)
+                stats.results.append(r)
+
+    workers = [asyncio.create_task(_worker(i)) for i in range(args.concurrency)]
     await asyncio.sleep(args.duration)
     stop.set()
     await asyncio.gather(*workers, return_exceptions=True)
