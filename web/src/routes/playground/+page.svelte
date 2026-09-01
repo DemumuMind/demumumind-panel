@@ -24,8 +24,13 @@
 
 	let filteredModels = $derived(
 		models.filter((m) => {
-			if (modelFilter && !m.user_model_id.toLowerCase().includes(modelFilter.toLowerCase())) return false;
-			return true;
+			if (!modelFilter) return true;
+			const q = modelFilter.toLowerCase();
+			return (
+				m.user_model_id?.toLowerCase().includes(q) ||
+				m.internal_model?.toLowerCase().includes(q) ||
+				m.provider?.name?.toLowerCase().includes(q)
+			);
 		})
 	);
 
