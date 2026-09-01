@@ -210,6 +210,21 @@ async def chat_completion(
     if resolved is None:
         raise NotFoundError(message=f"Model not found: {model}", request_id=request_id)
 
+    # Image-generation models cannot answer chat completions — auto-route
+    # to the provider's images/generations endpoint with the last user text.
+    if resolved.kind == "image":
+        img_body: dict[str, Any] = {"model": model, "prompt": _extract_prompt(body.get("messages") or [])}
+        for k in ("n", "size", "quality", "style", "response_format"):
+            if body.get(k) is not None:
+                img_body[k] = body[k]
+        return await image_generation(
+            request_id=request_id,
+            key_hash=key_hash,
+            agent_type=agent_type,
+            model=model,
+            body=img_body,
+        )
+
     prompt_text = _extract_prompt(body.get("messages") or [])
     guardrail = get_guardrail()
     guardrail.validate_input(prompt_text)

@@ -93,6 +93,10 @@ class ModelRecord:
         raw = (self.metadata or {}).get("limits")
         return raw if isinstance(raw, dict) and raw else None
 
+    @property
+    def kind(self) -> str:
+        return str((self.metadata or {}).get("kind", "chat"))
+
 
 def _model_priority(rec: ModelRecord, providers: dict[str, ProviderRecord]) -> int:
     """Lower = higher priority for global alias routing.
@@ -118,6 +122,7 @@ class ResolvedModel:
     pricing: dict[str, float] | None = None
     is_free: bool = False
     limits: dict[str, Any] | None = None
+    kind: str = "chat"
 
 
 class ProviderManager:
@@ -250,6 +255,7 @@ class ProviderManager:
             pricing=record.pricing,
             is_free=record.is_free,
             limits=record.limits,
+            kind=record.kind,
         )
 
     async def list_available_models_detailed(

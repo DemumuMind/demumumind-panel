@@ -83,6 +83,7 @@ def _model_meta_from_item(item: dict[str, Any]) -> dict[str, Any]:
         if pricing:
             meta["pricing"] = pricing
     mid = str(item.get("id") or "")
+    _mark_model_kind(meta, mid)
     pricing = meta.get("pricing") or {}
     free = mid.endswith(":free") or mid.endswith("-free") or (
         pricing and all(pricing.get(k, 0.0) == 0.0 for k in ("prompt", "completion", "request"))
@@ -98,6 +99,31 @@ def _model_meta_from_item(item: dict[str, Any]) -> dict[str, Any]:
         if limits:
             meta["limits"] = limits
     return meta
+
+
+_IMAGE_MODEL_HINTS = (
+    "gpt-image",
+    "dall-e",
+    "dalle",
+    "imagen",
+    "flux",
+    "stable-diffusion",
+    "sdxl",
+    "midjourney",
+    "image-gen",
+    "imagegen",
+)
+
+
+def _is_image_model(mid: str) -> bool:
+    lowered = mid.lower()
+    return any(h in lowered for h in _IMAGE_MODEL_HINTS)
+
+
+def _mark_model_kind(meta: dict[str, Any], mid: str) -> None:
+    """Tag model kind: image models are not chat-completions capable."""
+    if _is_image_model(mid):
+        meta["kind"] = "image"
 
 
 async def discover_provider_models(provider: Provider, request_id: str) -> list[str]:
@@ -191,6 +217,11 @@ def _test_body(protocol: str, internal_model: str) -> tuple[str, dict[str, Any]]
 async def test_provider_model(
     provider: Provider, internal_model: str, request_id: str
 ) -> DiscoveredModelStatus:
+    # Image models are not chat-completions capable; skip the ping.
+    if _is_image_model(internal_model):
+        return DiscoveredModelStatus(
+            internal_model=internal_model, ok=True, category="listed", latency_ms=0
+        )
     path, body = _test_body(provider.protocol, internal_model)
     pool = get_pool()
     start = time.monotonic()
