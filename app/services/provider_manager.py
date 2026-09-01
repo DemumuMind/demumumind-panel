@@ -183,11 +183,18 @@ class ProviderManager:
         )
 
     async def list_available_models_detailed(
-        self, limit: int, offset: int, provider_id: str | None = None
+        self, limit: int, offset: int, provider_id: str | None = None, provider_name: str | None = None
     ) -> PaginatedResponse[dict[str, Any]]:
         all_models = [m for m in self._models.values() if m.is_active]
         if provider_id:
             all_models = [m for m in all_models if m.provider_id == provider_id]
+        if provider_name:
+            matched: list[ModelRecord] = []
+            for m in all_models:
+                prov = self._provider(m.provider_id)
+                if prov is not None and prov.name == provider_name:
+                    matched.append(m)
+            all_models = matched
         total = len(all_models)
         page = all_models[offset : offset + limit]
         items: list[dict[str, Any]] = []
