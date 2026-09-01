@@ -305,6 +305,18 @@ class GeminiGenerateRequest(BaseModel):
     stream: bool = False
 
 
+class ImageGenerationRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    model: str
+    prompt: str = Field(min_length=1)
+    n: int | None = None
+    size: str | None = None
+    quality: str | None = None
+    response_format: str | None = None
+    style: str | None = None
+
+
 # --- Admin / auth / misc ---
 
 
@@ -451,6 +463,7 @@ __all__ = [
     "ChatCompletionRequest",
     "AnthropicMessageRequest",
     "GeminiGenerateRequest",
+    "ImageGenerationRequest",
     "LoginRequest",
     "AgentUsageOut",
     "UsageRowOut",

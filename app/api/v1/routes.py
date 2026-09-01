@@ -25,10 +25,17 @@ from app.schemas import (
     ChatCompletionRequest,
     GeminiGenerateRequest,
     HealthOut,
+    ImageGenerationRequest,
     PaginatedResponse,
 )
 from app.services.agent_id import get_registry
-from app.services.dispatch import CacheMarker, chat_completion, chat_completion_stream, resolve_stream_cache
+from app.services.dispatch import (
+    CacheMarker,
+    chat_completion,
+    chat_completion_stream,
+    image_generation,
+    resolve_stream_cache,
+)
 from app.services.finops import get_finops
 from app.services.router import get_router
 from app.services.telemetry import generate_metrics
@@ -153,6 +160,26 @@ async def chat_completions(
     )
     resp_headers = {"X-DM-Cache": "hit"} if marker.hit else None
     return JSONResponse(result, headers=resp_headers)
+
+
+@v1_router.post("/images/generations")
+async def images_generations(
+    request: Request,
+    body: ImageGenerationRequest,
+    key_hash: KeyHashDep,
+) -> Any:
+    request_id = getattr(request.state, "request_id", "")
+    agent_type = get_agent_type(request)
+    payload = body.model_dump(exclude_none=False)
+    payload = _drop_nulls(payload)
+    result = await image_generation(
+        request_id=request_id,
+        key_hash=key_hash,
+        agent_type=agent_type,
+        model=body.model,
+        body=payload,
+    )
+    return JSONResponse(result)
 
 
 @v1_router.post("/messages")

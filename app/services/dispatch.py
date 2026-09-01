@@ -148,12 +148,13 @@ async def _do_request(
     body: dict[str, Any],
     request_id: str,
     attempt: int = 0,
+    path_override: str | None = None,
 ) -> tuple[dict[str, Any], float]:
     pool = get_pool()
     manager = get_manager()
     key = manager.pick_key(resolved.provider_id, attempt)
     provider = _to_provider(resolved, key)
-    path = _provider_path(target, resolved.internal_model)
+    path = path_override or _provider_path(target, resolved.internal_model)
     start = time.monotonic()
     resp = await pool.request(
         provider=provider,
@@ -485,9 +486,51 @@ async def chat_completion_stream(
         logger.info("dispatch.stream_done", model=model, request_id=request_id)
 
 
+async def image_generation(
+    *,
+    request_id: str,
+    key_hash: str,
+    agent_type: str,
+    model: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Generate an image via the provider's images/generations endpoint.
+
+    Same-protocol passthrough (openai→openai) — no translation needed.
+    """
+    manager = get_manager()
+    resolved = manager.resolve(model, key_hash)
+    if resolved is None:
+        raise NotFoundError(message=f"Model not found: {model}", request_id=request_id)
+    data, latency = await _do_request(
+        resolved, resolved.protocol, resolved.protocol, body, request_id, path_override="images/generations"
+    )
+    await _record_db_usage(
+        agent_type=agent_type,
+        provider_id=resolved.provider_id,
+        model_id=resolved.model_id,
+        tokens_in=0,
+        tokens_out=0,
+        cost_usd=0.0,
+        is_free=_is_free_model(resolved),
+        unlimited=_is_unlimited_model(resolved),
+        price_known=bool(resolved and resolved.pricing),
+        cache_hit=False,
+    )
+    logger.info(
+        "dispatch.image_generated",
+        model=model,
+        provider=resolved.provider_name,
+        latency_ms=round(latency * 1000, 1),
+        request_id=request_id,
+    )
+    return data
+
+
 __all__ = [
     "chat_completion",
     "chat_completion_stream",
+    "image_generation",
     "resolve_stream_cache",
     "CacheMarker",
 ]
