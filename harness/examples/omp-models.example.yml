@@ -1,0 +1,18 @@
+# Add this block into ~/.omp/agent/models.yml under the top-level
+# "providers:" key (merge with your existing providers).
+providers:
+  demumumind:
+    name: DemumuMind
+    api: openai-completions
+    baseUrl: https://test-sprite-busun.sprites.app/demumumind/v1
+    apiKey: dm-... # set your DEMUMUMIND_API_KEY here
+    models:
+      - id: z-ai/glm-5.2:free
+        name: GLM 5.2 Free
+        contextWindow: 131072
+      - id: minimax/minimax-m3:free
+        name: MiniMax M3 Free
+        contextWindow: 131072
+      - id: gpt-5.6-sol
+        name: GPT 5.6 Sol
+        contextWindow: 400000

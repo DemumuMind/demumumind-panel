@@ -77,6 +77,34 @@ PROJECT_ROOT/
 │   └── main.py    # FastAPI app + lifespan
 ├── web/           # SvelteKit admin panel
 ├── alembic/       # Migrations
-├── tests/         # pytest-asyncio (40+ tests)
+├── tests/         # pytest-asyncio (75+ tests)
+├── docs/          # Integration guides
+├── harness/       # Example configs for LLM harnesses
 └── demumumind.service
 ```
+
+## Harness integration
+
+The panel is a drop-in OpenAI-compatible gateway. Any LLM harness
+(opencode, omp, Claude Code, Codex, Cursor) can use it as a single
+`base_url` instead of configuring every upstream provider separately.
+
+```bash
+# 1. Create a shared key (one-time)
+curl -H "Authorization: Bearer $PANEL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"monthly_budget":0}' \
+  http://localhost:8000/v1/admin/keys -X POST
+# → { "api_key": "dm-..." }
+
+# 2. Verify
+curl -H "Authorization: Bearer dm-..." \
+  http://localhost:8000/v1/models?limit=3 | jq .
+curl -H "Authorization: Bearer dm-..." \
+  -d '{"model":"z-ai/glm-5.2:free","messages":[{"role":"user","content":"hi"}]}' \
+  http://localhost:8000/v1/chat/completions
+```
+
+See [docs/harness-integration.md](docs/harness-integration.md) and
+[harness/examples/](harness/examples/) for opencode, omp, Claude Code,
+and Codex configuration examples.
