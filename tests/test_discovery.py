@@ -159,3 +159,32 @@ async def test_discover_requires_panel_key(client: AsyncClient) -> None:
     pid = rp.json()["id"]
     r = await client.post(f"/v1/admin/providers/{pid}/discover")
     assert r.status_code == 401
+
+
+async def test_discover_creates_history(client: AsyncClient, monkeypatch) -> None:
+    import app.services.discovery as discovery
+
+    async def _req(**kw):
+        return _fake_resp(200, {"data": [{"id": "m1"}, {"id": "m2"}]})
+
+    monkeypatch.setattr(discovery.get_pool(), "request", _req)
+    rp = await client.post(
+        "/v1/admin/providers",
+        headers=ADMIN_HEADERS,
+        json={"name": "HistoryProv", "base_url": "https://h.test/v1", "api_key": "sk", "protocol": "openai"},
+    )
+    pid = rp.json()["id"]
+    await _discover_sse(client, pid)
+    r = await client.get(f"/v1/admin/providers/{pid}/tests?limit=10&offset=0", headers=ADMIN_HEADERS)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] >= 1
+    run = data["items"][0]
+    assert run["kind"] == "discover"
+    assert run["ok_count"] == 2
+    assert run["total"] == 2
+    # fetch full result
+    r2 = await client.get(f"/v1/admin/tests/{run['id']}", headers=ADMIN_HEADERS)
+    assert r2.status_code == 200
+    full = r2.json()
+    assert full["result"]["total"] == 2
