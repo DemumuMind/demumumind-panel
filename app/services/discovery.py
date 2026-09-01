@@ -343,16 +343,6 @@ async def discover_and_test(
                         existing.meta = json.dumps(mmeta)
                 model_ids[mid] = existing
                 continue
-            # Global check: user_model_id is UNIQUE for routing (resolve by alias).
-            # If another provider already owns this alias, skip gracefully instead
-            # of hitting IntegrityError on autoflush/commit.
-            global_row = await session.execute(
-                select(Model).where(Model.user_model_id == mid).limit(1)
-            )
-            if global_row.scalar_one_or_none() is not None:
-                skipped += 1
-                logger.info("discovery.skipped_global_alias", provider=provider.name, model=mid)
-                continue
         m = Model(
             provider_id=provider.id,
             user_model_id=mid,

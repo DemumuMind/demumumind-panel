@@ -89,6 +89,41 @@ async def test_duplicate_user_model_409(client: AsyncClient) -> None:
     assert resp.json()["error"] == "duplicate"
 
 
+async def test_same_alias_two_providers_allowed(client: AsyncClient) -> None:
+    """Composite unique (provider_id, user_model_id) allows same alias across providers."""
+    rp1 = await client.post(
+        "/v1/admin/providers",
+        headers=ADMIN_HEADERS,
+        json={"name": "P1", "base_url": "https://p1.test/v1", "api_key": "k", "protocol": "openai"},
+    )
+    rp2 = await client.post(
+        "/v1/admin/providers",
+        headers=ADMIN_HEADERS,
+        json={"name": "P2", "base_url": "https://p2.test/v1", "api_key": "k", "protocol": "openai"},
+    )
+    pid1, pid2 = rp1.json()["id"], rp2.json()["id"]
+    m1 = await client.post(
+        "/v1/admin/models",
+        headers=ADMIN_HEADERS,
+        json={"provider_id": pid1, "user_model_id": "shared-alias", "internal_model": "internal-1"},
+    )
+    assert m1.status_code == 201
+    m2 = await client.post(
+        "/v1/admin/models",
+        headers=ADMIN_HEADERS,
+        json={"provider_id": pid2, "user_model_id": "shared-alias", "internal_model": "internal-2"},
+    )
+    assert m2.status_code == 201, m2.text
+    # global alias resolves to the first/default match
+    resolved = get_manager().resolve("shared-alias")
+    assert resolved is not None
+    # explicit provider/alias routing works
+    resolved2 = get_manager().resolve("P2/shared-alias")
+    assert resolved2 is not None
+    assert resolved2.internal_model == "internal-2"
+    assert resolved2.provider_name == "P2"
+
+
 async def test_api_key_created_once_and_hashed(client: AsyncClient) -> None:
     resp = await client.post("/v1/admin/keys", headers=ADMIN_HEADERS, json={"monthly_budget": 50})
     assert resp.status_code == 201

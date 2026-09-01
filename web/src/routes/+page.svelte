@@ -3,9 +3,9 @@
 	import Card from '$lib/components/ui/card.svelte';
 	import Stat from '$lib/components/ui/stat.svelte';
 	import Badge from '$lib/components/ui/badge.svelte';
-	import { getJSON, health, fetchUsage, fetchUsageTimeseries, fetchMcpServers, fetchPlugins } from '$lib/api';
+	import { getJSON, health, fetchUsage, fetchUsageTimeseries, fetchMcpServers, fetchPlugins, runCleanup } from '$lib/api';
 	import { showToast } from '$lib/stores';
-	import { Bot, Boxes, Key, Cable, Puzzle, Activity, ArrowUpRight } from 'lucide-svelte';
+	import { Bot, Boxes, Key, Cable, Puzzle, Activity, ArrowUpRight, Trash2 } from 'lucide-svelte';
 
 	let h = $state<any>(null);
 	let providers = $state(0);
@@ -39,6 +39,18 @@
 	let maxTsTokens = $derived(Math.max(...ts.map((p) => (p.tokens_in || 0) + (p.tokens_out || 0)), 1));
 	let totalRequests = $derived(ts.reduce((a, p) => a + (p.requests || 0), 0));
 	let maxBar = $derived(Math.max(...usage.map((u) => u.tokens_in + u.tokens_out), 1));
+
+	async function doCleanup() {
+		try {
+			const r = await runCleanup();
+			showToast(
+				`Cleanup: ${r.providers_deactivated} prov, ${r.models_deactivated} models, ${r.usage_deleted} usage rows`,
+				'success'
+			);
+		} catch (e: any) {
+			showToast(e.message, 'error');
+		}
+	}
 </script>
 
 <h1 class="text-2xl font-bold mb-6 flex items-center gap-2 text-(--text)">
@@ -140,7 +152,16 @@
 
 	{#if h}
 		<Card>
-			<h2 class="text-sm font-semibold mb-2 text-(--text)">Health Checks</h2>
+			<div class="flex items-center justify-between mb-2">
+				<h2 class="text-sm font-semibold text-(--text)">Health Checks</h2>
+				<button
+					onclick={doCleanup}
+					class="flex items-center gap-1 rounded-md border border-(--border) bg-(--bg-elevated) px-2 py-1 text-xs text-(--text-muted) hover:text-(--text) hover:border-(--border-strong) transition-colors"
+					title="Deactivate dead providers, delete old usage"
+				>
+					<Trash2 class="w-3 h-3" /> Run cleanup
+				</button>
+			</div>
 			<table class="w-full text-sm">
 				<thead>
 					<tr class="text-left text-(--text-muted) border-b border-(--border)">

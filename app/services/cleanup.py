@@ -39,7 +39,7 @@ def _now() -> datetime.datetime:
     return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
 
 
-async def run_cleanup(session: AsyncSession) -> CleanupReport:
+async def run_cleanup(session: AsyncSession, max_age_days: int | None = None) -> CleanupReport:
     report = CleanupReport(
         providers_deactivated=0,
         models_deactivated=0,
@@ -148,7 +148,8 @@ async def run_cleanup(session: AsyncSession) -> CleanupReport:
             logger.info("cleanup.key_deactivated", key_prefix=key.key_hash[:8])
 
     # 5. AgentUsage retention.
-    cutoff_usage = _now() - datetime.timedelta(days=USAGE_RETENTION_DAYS)
+    retention_days = max_age_days if max_age_days is not None else USAGE_RETENTION_DAYS
+    cutoff_usage = _now() - datetime.timedelta(days=retention_days)
     old_rows = await session.execute(
         select(AgentUsage.id).where(AgentUsage.created_at < cutoff_usage)
     )
@@ -156,7 +157,7 @@ async def run_cleanup(session: AsyncSession) -> CleanupReport:
     if old_ids:
         await session.execute(sa_delete(AgentUsage).where(AgentUsage.id.in_(old_ids)))
         report.usage_deleted = len(old_ids)
-        logger.info("cleanup.usage_retention", deleted=len(old_ids))
+        logger.info("cleanup.usage_retention", deleted=len(old_ids), retention_days=retention_days)
 
     await session.commit()
     await get_manager().refresh()

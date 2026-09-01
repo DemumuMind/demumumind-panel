@@ -54,13 +54,14 @@ class Provider(Base):
 
 class Model(Base):
     __tablename__ = "models"
+    __table_args__ = (UniqueConstraint("provider_id", "user_model_id", name="uq_models_provider_user"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     provider_id: Mapped[str] = mapped_column(
         String, ForeignKey("providers.id", ondelete="CASCADE"), index=True
     )
     user_model_id: Mapped[str] = mapped_column(
-        String, unique=True, nullable=False, index=True
+        String, nullable=False, index=True
     )
     internal_model: Mapped[str] = mapped_column(String, nullable=False)
     meta: Mapped[str] = mapped_column("metadata", Text, default="{}")

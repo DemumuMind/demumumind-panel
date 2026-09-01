@@ -389,8 +389,12 @@ async def delete_provider_key(
 
 
 @admin_router.post("/cleanup", response_model=CleanupReport)
-async def cleanup_endpoint(_: PanelDep, session: SessionDep) -> CleanupReport:
-    return await run_cleanup(session)
+async def cleanup_endpoint(
+    _: PanelDep,
+    session: SessionDep,
+    max_age_days: int | None = Query(default=None, ge=1, le=3650),
+) -> CleanupReport:
+    return await run_cleanup(session, max_age_days=max_age_days)
 
 
 @admin_router.get("/models")

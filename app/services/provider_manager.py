@@ -94,6 +94,17 @@ class ModelRecord:
         return raw if isinstance(raw, dict) and raw else None
 
 
+def _model_priority(rec: ModelRecord, providers: dict[str, ProviderRecord]) -> int:
+    """Lower = higher priority for global alias routing.
+
+    Default provider models win over non-default.
+    """
+    provider = providers.get(rec.provider_id)
+    if provider and provider.is_default:
+        return 0
+    return 1
+
+
 @dataclass
 class ResolvedModel:
     user_model_id: str
@@ -113,6 +124,7 @@ class ProviderManager:
     def __init__(self) -> None:
         self._providers: dict[str, ProviderRecord] = {}
         self._models: dict[str, ModelRecord] = {}
+        self._models_by_provider: dict[tuple[str, str], ModelRecord] = {}
         self._key_mappings: dict[str, dict[str, str]] = {}
         self._provider_keys: dict[str, list[str]] = {}
         self._rr_counter: dict[str, int] = {}
@@ -137,7 +149,20 @@ class ProviderManager:
         keys = (await session.execute(select(ApiKey.key_hash, ApiKey.model_mapping))).all()
         pool_keys = (await session.execute(select(ProviderKey).where(ProviderKey.is_active == 1))).scalars().all()
         self._providers = {p.id: ProviderRecord.from_orm(p) for p in providers}
-        self._models = {m.user_model_id: ModelRecord.from_orm(m) for m in models}
+        # Composite unique (provider_id, user_model_id) allows the same alias
+        # across providers. Global `_models` keeps the first active match for
+        # unambiguous routing ("gpt-4o"); `_models_by_provider` enables
+        # explicit "provider-name/model" routing when aliases collide.
+        self._models = {}
+        self._models_by_provider = {}
+        for m in models:
+            rec = ModelRecord.from_orm(m)
+            self._models_by_provider[(rec.provider_id, rec.user_model_id)] = rec
+            if not rec.is_active:
+                continue
+            existing = self._models.get(rec.user_model_id)
+            if existing is None or _model_priority(rec, self._providers) < _model_priority(existing, self._providers):
+                self._models[rec.user_model_id] = rec
         self._key_mappings = {}
         for kh, raw in keys:
             mapping = json.loads(raw or "{}")
@@ -192,12 +217,27 @@ class ProviderManager:
         target = user_model_id
         if key_hash and key_hash in self._key_mappings and user_model_id in self._key_mappings[key_hash]:
             target = self._key_mappings[key_hash][user_model_id]
+        # Explicit "provider-name/model" routing for colliding aliases.
+        if target not in self._models and "/" in target:
+            provider_name, _, alias = target.partition("/")
+            for (pid, alias_key), rec in self._models_by_provider.items():
+                if alias_key != alias:
+                    continue
+                prov = self._provider(pid)
+                if prov is not None and prov.name == provider_name and rec.is_active:
+                    return self._build_resolved(rec, target)
         record = self._models.get(target)
         if record is None or not record.is_active:
             return None
         provider = self._provider(record.provider_id)
         if provider is None or not provider.is_active:
             return None
+        return self._build_resolved(record, target)
+
+    def _build_resolved(self, record: ModelRecord, target: str) -> ResolvedModel:
+        provider = self._provider(record.provider_id)
+        if provider is None:
+            raise RuntimeError(f"provider {record.provider_id} missing")
         return ResolvedModel(
             user_model_id=target,
             internal_model=record.internal_model,

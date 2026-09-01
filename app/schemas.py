@@ -49,6 +49,13 @@ class CreateProviderRequest(BaseModel):
     is_active: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("base_url")
+    @classmethod
+    def _validate_url(cls, v: str) -> str:
+        if "://" not in v:
+            raise ValueError("base_url must include scheme (http:// or https://)")
+        return v.rstrip("/")
+
 
 class UpdateProviderRequest(BaseModel):
     base_url: str | None = None
@@ -57,6 +64,13 @@ class UpdateProviderRequest(BaseModel):
     is_default: bool | None = None
     is_active: bool | None = None
     metadata: dict[str, Any] | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_url(cls, v: str | None) -> str | None:
+        if v is not None and "://" not in v:
+            raise ValueError("base_url must include scheme (http:// or https://)")
+        return v.rstrip("/") if v else v
 
 
 def _parse_json_field(value: Any) -> dict[str, Any]:

@@ -58,6 +58,8 @@
 	let isDefault = $state(false);
 	let busy = $state(false);
 
+	let baseUrlValid = $derived(/^https?:\/\/./.test(baseUrl));
+
 	async function load() {
 		try {
 			const data = await fetchProviders(100, 0);
@@ -324,17 +326,22 @@
 	<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
 		<Input placeholder="Name" bind:value={name} />
 		<Input placeholder="Base URL" bind:value={baseUrl} class="sm:col-span-2" />
+	{#if baseUrl && !baseUrlValid}
+		<p class="col-span-2 text-xs text-red-400 -mt-2">Must start with http:// or https://</p>
+	{/if}
 		<Input type="password" placeholder="API Key (optional)" bind:value={apiKey} />
-		<Select bind:value={protocol}>
-			<option value="openai">openai</option>
-			<option value="anthropic">anthropic</option>
-			<option value="gemini">gemini</option>
-		</Select>
+	<Select bind:value={protocol}>
+		<option value="openai">openai</option>
+		<option value="anthropic">anthropic</option>
+		<option value="gemini">gemini</option>
+		<option value="google">google</option>
+		<option value="vertex">vertex</option>
+	</Select>
 		<label class="flex items-center gap-2 text-sm text-(--text-muted)">
 			<input type="checkbox" bind:checked={isDefault} class="accent-(--accent)" /> Default
 		</label>
 	</div>
-	<Button onclick={add} disabled={busy || !name || !baseUrl} class="mt-3"><Plus class="w-4 h-4" /> Add</Button>
+	<Button onclick={add} disabled={busy || !name || !baseUrl || !baseUrlValid} class="mt-3"><Plus class="w-4 h-4" /> Add</Button>
 </Card>
 
 <Card>
@@ -570,11 +577,13 @@
 				</div>
 				<div>
 					<label class="text-xs text-(--text-muted) block mb-1">Protocol</label>
-					<Select bind:value={editProtocol}>
-						<option value="openai">openai</option>
-						<option value="anthropic">anthropic</option>
-						<option value="gemini">gemini</option>
-					</Select>
+				<Select bind:value={editProtocol}>
+					<option value="openai">openai</option>
+					<option value="anthropic">anthropic</option>
+					<option value="gemini">gemini</option>
+					<option value="google">google</option>
+					<option value="vertex">vertex</option>
+				</Select>
 				</div>
 				<div class="flex gap-6">
 					<label class="flex items-center gap-2 text-sm text-(--text-muted)">
