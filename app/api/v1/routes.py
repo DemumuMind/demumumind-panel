@@ -44,9 +44,30 @@ v1_router = APIRouter(prefix="/v1", tags=["v1"])
 PANEL_SENTINEL = "__panel__"
 
 
-def _clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove null-valued keys from messages (strict providers reject null)."""
-    return [{k: v for k, v in m.items() if v is not None} for m in messages]
+def _drop_nulls(d: dict[str, Any]) -> dict[str, Any]:
+    """Recursively remove keys with None values (strict providers reject null)."""
+    result: dict[str, Any] = {}
+    for k, v in d.items():
+        if v is None:
+            continue
+        if isinstance(v, dict):
+            cleaned = _drop_nulls(v)
+            if cleaned:
+                result[k] = cleaned
+        elif isinstance(v, list):
+            cleaned_list: list[Any] = []
+            for item in v:
+                if isinstance(item, dict):
+                    cleaned_item = _drop_nulls(item)
+                    if cleaned_item:
+                        cleaned_list.append(cleaned_item)
+                elif item is not None:
+                    cleaned_list.append(item)
+            if cleaned_list:
+                result[k] = cleaned_list
+        else:
+            result[k] = v
+    return result
 
 
 async def require_client_key(request: Request) -> str:
@@ -103,8 +124,7 @@ async def chat_completions(
     request_id = getattr(request.state, "request_id", "")
     agent_type = get_agent_type(request)
     payload = body.model_dump(exclude_none=False)
-    if payload.get("messages"):
-        payload["messages"] = _clean_messages(payload["messages"])
+    payload = _drop_nulls(payload)
     if body.stream:
         is_cached, cached_sse = await resolve_stream_cache(body.model, key_hash, payload)
         headers = {"X-DM-Cache": "hit"} if is_cached else None
@@ -144,8 +164,7 @@ async def anthropic_messages(
     request_id = getattr(request.state, "request_id", "")
     agent_type = get_agent_type(request)
     payload = body.model_dump(exclude_none=False)
-    if payload.get("messages"):
-        payload["messages"] = _clean_messages(payload["messages"])
+    payload = _drop_nulls(payload)
     marker = CacheMarker()
     result = await chat_completion(
         request_id=request_id,
@@ -170,10 +189,7 @@ async def gemini_generate_content(
     request_id = getattr(request.state, "request_id", "")
     agent_type = get_agent_type(request)
     payload = body.model_dump(exclude_none=False)
-    if payload.get("contents"):
-        for c in payload["contents"]:
-            if isinstance(c, dict) and isinstance(c.get("parts"), list):
-                c["parts"] = [{k: v for k, v in p.items() if v is not None} for p in c["parts"] if isinstance(p, dict)]
+    payload = _drop_nulls(payload)
     payload["model"] = model
     marker = CacheMarker()
     result = await chat_completion(
