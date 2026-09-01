@@ -4,8 +4,11 @@
 	import Badge from '$lib/components/ui/badge.svelte';
 	import Button from '$lib/components/ui/button.svelte';
 	import Input from '$lib/components/ui/input.svelte';
+	import Table from '$lib/components/ui/table.svelte';
+	import EmptyState from '$lib/components/ui/empty-state.svelte';
 	import { fetchPlugins, uploadPlugin, invokePlugin } from '$lib/api';
 	import { showToast } from '$lib/stores';
+	import { Puzzle, Upload, Zap } from 'lucide-svelte';
 
 	let plugins = $state<any[]>([]);
 	let pluginName = $state('');
@@ -53,60 +56,52 @@
 	}
 </script>
 
-<h1 class="text-2xl font-bold mb-6">Plugins</h1>
+<div class="flex items-center gap-2 mb-6">
+	<Puzzle class="w-5 h-5 text-(--accent)" />
+	<h1 class="text-2xl font-bold text-(--text)">Plugins</h1>
+</div>
 
 <Card class="mb-6">
-	<h2 class="text-sm font-semibold mb-3">Upload .wasm Plugin</h2>
+	<h2 class="text-sm font-semibold mb-3 text-(--text)">Upload .wasm Plugin</h2>
 	<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
 		<Input placeholder="Plugin name" bind:value={pluginName} />
 		<Input placeholder="Ed25519 signature (hex)" bind:value={pluginSignature} />
-		<input type="file" accept=".wasm" onchange={(e) => (file = (e.target as HTMLInputElement).files?.[0])} class="text-sm text-zinc-400 file:mr-3 file:rounded file:border-0 file:bg-zinc-800 file:px-3 file:py-1 file:text-sm file:text-zinc-200" />
+		<input type="file" accept=".wasm" onchange={(e) => (file = (e.target as HTMLInputElement).files?.[0])} class="text-sm text-(--text-muted) file:mr-3 file:rounded file:border-0 file:bg-(--bg-elevated) file:px-3 file:py-1 file:text-sm file:text-(--text)" />
 	</div>
-	<Button onclick={upload} disabled={busy || !file || !pluginName} class="mt-3">Upload</Button>
+	<Button onclick={upload} disabled={busy || !file || !pluginName} class="mt-3"><Upload class="w-4 h-4" /> Upload</Button>
 </Card>
 
 <Card>
-	<div class="overflow-x-auto">
-	<table class="w-full text-sm min-w-[480px]">
-		<thead>
-			<tr class="text-left text-zinc-400 border-b border-zinc-800">
-				<th class="py-2">Name</th>
-				<th>Size</th>
-				<th>Signature</th>
-				<th>Status</th>
-				<th>Invoke</th>
+	<Table headers={['Name', 'Size', 'Signature', 'Status', 'Invoke']}>
+		{#each plugins as p}
+			<tr class="border-b border-(--border)/50 hover:bg-(--bg-hover) transition-colors">
+				<td class="py-2 px-3 font-medium text-(--text)">{p.name}</td>
+				<td class="py-2 px-3 text-(--text-muted) tabular-nums">{p.size_bytes} B</td>
+				<td class="py-2 px-3">
+					<Badge variant={p.signature_valid ? 'success' : 'danger'} dot>{p.signature_valid ? 'valid' : 'invalid'}</Badge>
+				</td>
+				<td class="py-2 px-3">
+					<Badge variant={p.loaded ? 'success' : 'danger'}>{p.loaded ? 'loaded' : 'error'}</Badge>
+					{#if p.error}
+						<span class="text-xs text-red-400 ml-2">{p.error}</span>
+					{/if}
+				</td>
+				<td class="py-2 px-3">
+					<div class="flex items-center gap-2">
+						<Input placeholder="fn" bind:value={invokeFn} class="w-20" />
+						<Input placeholder="[2, 3]" bind:value={invokeArgs} class="w-24" />
+						<Button variant="secondary" size="sm" onclick={() => invoke(p.name)}><Zap class="w-3.5 h-3.5" /></Button>
+					</div>
+					{#if invokeResult[p.name]}
+						<pre class="mt-1 text-xs text-(--text-muted) whitespace-pre-wrap">{invokeResult[p.name]}</pre>
+					{/if}
+				</td>
 			</tr>
-		</thead>
-		<tbody>
-			{#each plugins as p}
-				<tr class="border-b border-zinc-800/50">
-					<td class="py-2 font-medium">{p.name}</td>
-					<td class="text-zinc-400">{p.size_bytes} B</td>
-					<td>
-						<Badge variant={p.signature_valid ? 'success' : 'danger'}>{p.signature_valid ? 'valid' : 'invalid'}</Badge>
-					</td>
-					<td>
-						<Badge variant={p.loaded ? 'success' : 'danger'}>{p.loaded ? 'loaded' : 'error'}</Badge>
-						{#if p.error}
-							<span class="text-xs text-red-400 ml-2">{p.error}</span>
-						{/if}
-					</td>
-					<td class="py-2">
-						<div class="flex items-center gap-2">
-							<Input placeholder="fn" bind:value={invokeFn} class="w-20" />
-							<Input placeholder="[2, 3]" bind:value={invokeArgs} class="w-24" />
-							<Button onclick={() => invoke(p.name)} class="!px-2 !py-1 !text-xs">Invoke</Button>
-						</div>
-						{#if invokeResult[p.name]}
-							<pre class="mt-1 text-xs text-zinc-400 whitespace-pre-wrap">{invokeResult[p.name]}</pre>
-						{/if}
-					</td>
-				</tr>
-			{/each}
-			{#if plugins.length === 0}
-				<tr><td colspan="5" class="py-4 text-center text-zinc-500">No plugins uploaded</td></tr>
-			{/if}
-		</tbody>
-	</table>
-	</div>
+		{/each}
+	</Table>
+	{#if plugins.length === 0}
+		<EmptyState title="No plugins uploaded" description="Upload a .wasm plugin with its Ed25519 signature.">
+			{#snippet icon()}<Puzzle class="w-5 h-5" />{/snippet}
+		</EmptyState>
+	{/if}
 </Card>

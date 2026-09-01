@@ -1,7 +1,23 @@
 <script lang="ts">
-	let { children, class: className = '', ...rest }: { children?: import('svelte').Snippet; class?: string; [key: string]: any } = $props();
+	import { cn } from '$lib/utils';
+
+	let {
+		children,
+		class: className = '',
+		hover = false,
+		padded = true,
+		...rest
+	}: { children?: import('svelte').Snippet; class?: string; hover?: boolean; padded?: boolean; [key: string]: any } = $props();
 </script>
 
-<div class="rounded-xl border border-zinc-800 bg-[#1a1a1e] p-4 {className}" {...rest}>
+<div
+	class={cn(
+		'rounded-xl border border-(--border) bg-(--bg-card) shadow-(--shadow-card)',
+		padded && 'p-4',
+		hover && 'hover:border-(--border-strong) hover:shadow-(--shadow-lift) hover:-translate-y-px',
+		className
+	)}
+	{...rest}
+>
 	{@render children?.()}
 </div>

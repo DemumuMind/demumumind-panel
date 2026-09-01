@@ -6,6 +6,7 @@
 	import Button from '$lib/components/ui/button.svelte';
 	import Card from '$lib/components/ui/card.svelte';
 	import { login } from '$lib/api';
+	import { Lock } from 'lucide-svelte';
 
 	let key = $state('');
 	let error = $state('');
@@ -22,12 +23,17 @@
 	}
 </script>
 
-<div class="flex items-center justify-center min-h-full p-4">
+<div class="flex items-center justify-center min-h-full p-4 bg-(--bg)">
 	<Card class="w-full max-w-md mx-4 sm:w-96">
-		<h1 class="text-xl font-bold mb-2">DemumuMind</h1>
-		<p class="text-sm text-zinc-400 mb-4">Enter your Panel API Key</p>
+		<div class="flex flex-col items-center text-center mb-6">
+			<div class="w-12 h-12 rounded-xl bg-gradient-to-br from-(--accent) to-(--accent-2) flex items-center justify-center text-white mb-3">
+				<Lock class="w-6 h-6" />
+			</div>
+			<h1 class="text-xl font-bold bg-gradient-to-r from-(--accent) to-(--accent-2) bg-clip-text text-transparent">DemumuMind</h1>
+			<p class="text-sm text-(--text-faint) mt-1">Enter your Panel API Key</p>
+		</div>
 		{#if error}
-			<div class="mb-3 text-sm text-red-400">{error}</div>
+			<div class="mb-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm px-3 py-2">{error}</div>
 		{/if}
 		<form onsubmit={(e) => { e.preventDefault(); handleLogin(); }}>
 			<Input

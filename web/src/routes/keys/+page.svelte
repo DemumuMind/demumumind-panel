@@ -3,8 +3,11 @@
 	import Card from '$lib/components/ui/card.svelte';
 	import Button from '$lib/components/ui/button.svelte';
 	import Input from '$lib/components/ui/input.svelte';
+	import Table from '$lib/components/ui/table.svelte';
+	import EmptyState from '$lib/components/ui/empty-state.svelte';
 	import { fetchKeys, createKey, deleteKey } from '$lib/api';
 	import { showToast } from '$lib/stores';
+	import { Key, Plus, Trash2 } from 'lucide-svelte';
 
 	let keys = $state<any[]>([]);
 	let budget = $state('0');
@@ -46,53 +49,45 @@
 	}
 </script>
 
-<h1 class="text-2xl font-bold mb-6">API Keys</h1>
+<div class="flex items-center gap-2 mb-6">
+	<Key class="w-5 h-5 text-(--accent)" />
+	<h1 class="text-2xl font-bold text-(--text)">API Keys</h1>
+</div>
 
 <Card class="mb-6">
-	<h2 class="text-sm font-semibold mb-3">Generate Key</h2>
+	<h2 class="text-sm font-semibold mb-3 text-(--text)">Generate Key</h2>
 	<div class="flex flex-col sm:flex-row gap-3 items-end">
 		<div class="w-full sm:w-32">
-			<label for="key-budget" class="text-xs text-zinc-500 block mb-1">Monthly budget (USD)</label>
+			<label for="key-budget" class="text-xs text-(--text-muted) block mb-1">Monthly budget (USD)</label>
 			<Input id="key-budget" type="number" bind:value={budget} class="w-full" />
 		</div>
-		<Button onclick={add} disabled={busy}>Generate</Button>
+		<Button onclick={add} disabled={busy}><Plus class="w-4 h-4" /> Generate</Button>
 	</div>
 	{#if newKey}
-		<div class="mt-3 p-3 bg-indigo-900/30 border border-indigo-700 rounded-lg text-sm">
-			<span class="font-bold text-indigo-300">⚠️ Copy this key now:</span>
-			<code class="block mt-1 text-indigo-200 break-all select-all">{newKey}</code>
+		<div class="mt-3 p-3 bg-(--accent-soft) border border-(--accent)/30 rounded-lg text-sm">
+			<span class="font-bold text-(--accent-hover)">⚠️ Copy this key now:</span>
+			<code class="block mt-1 text-(--accent-hover) break-all select-all">{newKey}</code>
 		</div>
 	{/if}
 </Card>
 
 <Card>
-	<div class="overflow-x-auto">
-	<table class="w-full text-sm min-w-[480px]">
-		<thead>
-			<tr class="text-left text-zinc-400 border-b border-zinc-800">
-				<th class="py-2">ID</th>
-				<th>Key hash (prefix)</th>
-				<th>Budget</th>
-				<th>Created</th>
-				<th class="text-right">Actions</th>
+	<Table headers={['ID', 'Key hash (prefix)', 'Budget', 'Created', 'Actions']}>
+		{#each keys as k}
+			<tr class="border-b border-(--border)/50 hover:bg-(--bg-hover) transition-colors">
+				<td class="py-2 px-3 text-(--text-muted) text-xs tabular-nums">{k.id.slice(0, 8)}…</td>
+				<td class="py-2 px-3"><code class="text-xs text-(--text-muted)">{k.key_hash.slice(0, 12)}…</code></td>
+				<td class="py-2 px-3 tabular-nums">${k.monthly_budget.toFixed(2)}</td>
+				<td class="py-2 px-3 text-xs text-(--text-faint) tabular-nums">{new Date(k.created_at).toLocaleDateString()}</td>
+				<td class="py-2 px-3 text-right">
+					<Button variant="ghost" size="sm" onclick={() => remove(k.id)}><Trash2 class="w-3.5 h-3.5" /></Button>
+				</td>
 			</tr>
-		</thead>
-		<tbody>
-			{#each keys as k}
-				<tr class="border-b border-zinc-800/50">
-					<td class="py-2 text-zinc-400 text-xs">{k.id.slice(0, 8)}…</td>
-					<td><code class="text-xs">{k.key_hash.slice(0, 12)}…</code></td>
-					<td>${k.monthly_budget.toFixed(2)}</td>
-					<td class="text-xs text-zinc-400">{new Date(k.created_at).toLocaleDateString()}</td>
-					<td class="text-right">
-						<button onclick={() => remove(k.id)} class="text-xs text-red-400 hover:text-red-300">Revoke</button>
-					</td>
-				</tr>
-			{/each}
-			{#if keys.length === 0}
-				<tr><td colspan="5" class="py-4 text-center text-zinc-500">No keys</td></tr>
-			{/if}
-		</tbody>
-	</table>
-	</div>
+		{/each}
+	</Table>
+	{#if keys.length === 0}
+		<EmptyState title="No keys" description="Generate your first API key.">
+			{#snippet icon()}<Key class="w-5 h-5" />{/snippet}
+		</EmptyState>
+	{/if}
 </Card>
