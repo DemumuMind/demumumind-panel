@@ -150,6 +150,13 @@ async def chat_completion(
             logger.info("dispatch.cache_hit", model=model, request_id=request_id)
             if marker is not None:
                 marker.hit = True
+            await _record_db_usage(
+                agent_type=agent_type,
+                provider_id=resolved.provider_id,
+                tokens_in=0,
+                tokens_out=0,
+                cost_usd=0.0,
+            )
             return cast(dict[str, Any], json.loads(cached))
 
     target = normalize_protocol(resolved.protocol)
@@ -226,6 +233,42 @@ async def resolve_stream_cache(
     return False, None
 
 
+async def _extract_stream_usage(sse_chunks: list[bytes]) -> dict[str, Any] | None:
+    """Extract usage from the final SSE chunk (stream_options.include_usage)."""
+    text = b"".join(sse_chunks).decode("utf-8", errors="replace")
+    for line in text.splitlines():
+        trimmed = line.strip()
+        if not trimmed.startswith("data:"):
+            continue
+        data = trimmed[5:].strip()
+        if data == "[DONE]":
+            continue
+        try:
+            parsed = json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        usage = parsed.get("usage")
+        if isinstance(usage, dict):
+            return usage
+    return None
+
+
+async def _record_stream_db_usage(
+    *, agent_type: str, provider_id: str | None, sse_chunks: list[bytes]
+) -> None:
+    usage = await _extract_stream_usage(sse_chunks) if sse_chunks else None
+    tokens_in = int((usage or {}).get("prompt_tokens", 0) or 0)
+    tokens_out = int((usage or {}).get("completion_tokens", 0) or 0)
+    record_usage(tokens_in, tokens_out, 0.0, provider_id=provider_id, agent_type=agent_type)
+    await _record_db_usage(
+        agent_type=agent_type,
+        provider_id=provider_id,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cost_usd=0.0,
+    )
+
+
 async def chat_completion_stream(
     *,
     request_id: str,
@@ -249,6 +292,13 @@ async def chat_completion_stream(
         cached_sse = await cache.get_stream(model, prompt_text, temperature, tools, key_hash)
         if cached_sse is not None:
             logger.info("dispatch.stream_cache_hit", model=model, request_id=request_id)
+            await _record_db_usage(
+                agent_type=agent_type,
+                provider_id=resolved.provider_id,
+                tokens_in=0,
+                tokens_out=0,
+                cost_usd=0.0,
+            )
             yield cached_sse.encode("utf-8")
             return
 
@@ -288,13 +338,10 @@ async def chat_completion_stream(
             await cache.set_stream(model, prompt_text, temperature, tools, full_sse, key_hash)
             logger.info("dispatch.stream_cached", model=model, request_id=request_id)
         record_latency(time.monotonic() - start, provider_id=resolved.provider_id)
-        record_usage(0, 0, 0.0, provider_id=resolved.provider_id, agent_type=agent_type)
-        await _record_db_usage(
+        await _record_stream_db_usage(
             agent_type=agent_type,
             provider_id=resolved.provider_id,
-            tokens_in=0,
-            tokens_out=0,
-            cost_usd=0.0,
+            sse_chunks=sse_chunks,
         )
         logger.info("dispatch.stream_done", model=model, request_id=request_id)
 
