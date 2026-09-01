@@ -23,7 +23,7 @@ from app.api.v1.middleware import AuthState, hash_key
 from app.config import settings
 from app.core.db import get_db
 from app.core.errors import AppError, NotFoundError
-from app.models import ApiKey, McpPermission, McpServer, Model, Plugin, Provider, ProviderKey
+from app.models import ApiKey, McpPermission, McpServer, Model, Plugin, Provider, ProviderKey, ProviderTestRun
 from app.schemas import (
     ApiKeyCreated,
     ApiKeyOut,
@@ -45,6 +45,7 @@ from app.schemas import (
     PluginOut,
     ProviderKeyOut,
     ProviderOut,
+    ProviderTestRunOut,
     TestProviderResult,
     UpdateProviderRequest,
 )
@@ -223,6 +224,68 @@ async def test_single_model_endpoint(
 ) -> DiscoveredModelStatus:
     provider = await _provider_or_404(session, provider_id)
     return await test_provider_model(provider, internal_model, getattr(request.state, "request_id", ""))
+
+
+@admin_router.get("/providers/{provider_id}/tests")
+async def list_provider_tests(
+    provider_id: str,
+    _: PanelDep,
+    session: SessionDep,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    sort: str = Query(default="created_at"),
+    order: str = Query(default="desc"),
+    kind: str | None = Query(default=None),
+) -> PaginatedResponse[ProviderTestRunOut]:
+    await _provider_or_404(session, provider_id)
+    base = select(ProviderTestRun).where(ProviderTestRun.provider_id == provider_id)
+    if kind in ("discover", "test"):
+        base = base.where(ProviderTestRun.kind == kind)
+    total = await session.execute(select(func.count()).select_from(base.subquery()))
+    total_count = int(total.scalar_one() or 0)
+    col = ProviderTestRun.created_at if sort == "created_at" else ProviderTestRun.ok_count
+    rows = await session.execute(
+        base.order_by(col.asc() if order == "asc" else col.desc()).limit(limit).offset(offset)
+    )
+    items = []
+    for r in rows.scalars().all():
+        data = json.loads(r.result or "{}")
+        items.append(
+            ProviderTestRunOut(
+                id=r.id,
+                provider_id=r.provider_id,
+                provider_name=r.provider_name,
+                kind=r.kind,
+                ok_count=r.ok_count,
+                total=r.total,
+                created_at=r.created_at,
+                result=data if isinstance(data, dict) else {},
+            )
+        )
+    return PaginatedResponse[ProviderTestRunOut](items=items, total=total_count, limit=limit, offset=offset)
+
+
+@admin_router.get("/tests/{run_id}")
+async def get_provider_test_run(
+    run_id: str,
+    _: PanelDep,
+    session: SessionDep,
+) -> ProviderTestRunOut:
+    row = await session.execute(select(ProviderTestRun).where(ProviderTestRun.id == run_id).limit(1))
+    run = row.scalar_one_or_none()
+    if run is None:
+        raise NotFoundError(message=f"Test run not found: {run_id}")
+    data = json.loads(run.result or "{}")
+    return ProviderTestRunOut(
+        id=run.id,
+        provider_id=run.provider_id,
+        provider_name=run.provider_name,
+        kind=run.kind,
+        ok_count=run.ok_count,
+        total=run.total,
+        created_at=run.created_at,
+        result=data if isinstance(data, dict) else {},
+    )
 
 
 @admin_router.get("/providers/{provider_id}/keys", response_model=list[ProviderKeyOut])

@@ -136,6 +136,24 @@ export async function testProviderModel(id: string, internalModel: string) {
 	return postJSON<any>(`/v1/admin/providers/${id}/models/${encodeURIComponent(internalModel)}/test`, {});
 }
 
+export async function fetchProviderTests(
+	id: string,
+	opts: { limit?: number; offset?: number; sort?: string; order?: string; kind?: string } = {}
+) {
+	const q = new URLSearchParams({
+		limit: String(opts.limit ?? 50),
+		offset: String(opts.offset ?? 0),
+		sort: opts.sort ?? 'created_at',
+		order: opts.order ?? 'desc'
+	});
+	if (opts.kind) q.set('kind', opts.kind);
+	return getJSON<{ items: any[]; total: number }>(`/v1/admin/providers/${id}/tests?${q}`);
+}
+
+export async function fetchProviderTest(runId: string) {
+	return getJSON<any>(`/v1/admin/tests/${runId}`);
+}
+
 export async function fetchProviderKeys(id: string) {
 	return getJSON<any[]>(`/v1/admin/providers/${id}/keys`);
 }

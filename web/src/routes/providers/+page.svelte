@@ -17,10 +17,12 @@
 		testProviderModel,
 		fetchProviderKeys,
 		addProviderKey,
-		deleteProviderKey
+		deleteProviderKey,
+		fetchProviderTests,
+		fetchProviderTest
 	} from '$lib/api';
 	import { showToast } from '$lib/stores';
-	import { Bot, Plus, Trash2, RefreshCw, Play, ChevronDown, ChevronRight, X, Pencil, Save } from 'lucide-svelte';
+	import { Bot, Plus, Trash2, RefreshCw, Play, ChevronDown, ChevronRight, X, Pencil, Save, History, Search } from 'lucide-svelte';
 
 	let items = $state<any[]>([]);
 	let expanded = $state<Record<string, boolean>>({});
@@ -31,13 +33,23 @@
 	let progress = $state<Record<string, any>>({});
 
 	// edit modal state
-	let editingProvider: any = null;
+	let editingProvider = $state<any>(null);
 	let editName = $state('');
 	let editBaseUrl = $state('');
 	let editApiKey = $state('');
 	let editProtocol = $state('openai');
 	let editIsDefault = $state(false);
 	let editIsActive = $state(true);
+
+	// history state
+	let historyOpen = $state<Record<string, boolean>>({});
+	let historyItems = $state<Record<string, any[]>>({});
+	let historyTotal = $state<Record<string, number>>({});
+	let historySort = $state<Record<string, string>>({});
+	let historyOrder = $state<Record<string, string>>({});
+	let historyKind = $state<Record<string, string>>({});
+	let historyPage = $state<Record<string, number>>({});
+	let historyRun = $state<Record<string, any>>({});
 
 	let name = $state('');
 	let baseUrl = $state('');
@@ -197,6 +209,79 @@
 		}
 	}
 
+	async function toggleHistory(id: string) {
+		historyOpen[id] = !historyOpen[id];
+		if (historyOpen[id] && !historyItems[id]) {
+			historySort[id] = historySort[id] || 'created_at';
+			historyOrder[id] = historyOrder[id] || 'desc';
+			historyKind[id] = historyKind[id] || '';
+			historyPage[id] = historyPage[id] || 0;
+			await loadHistory(id);
+		}
+	}
+
+	async function loadHistory(id: string) {
+		try {
+			const data = await fetchProviderTests(id, {
+				limit: 20,
+				offset: (historyPage[id] || 0) * 20,
+				sort: historySort[id] || 'created_at',
+				order: historyOrder[id] || 'desc',
+				kind: historyKind[id] || undefined
+			});
+			historyItems[id] = data.items;
+			historyTotal[id] = data.total;
+		} catch (e: any) {
+			showToast(e.message, 'error');
+		}
+	}
+
+	function sortHistory(id: string, col: string) {
+		if (historySort[id] === col) {
+			historyOrder[id] = historyOrder[id] === 'desc' ? 'asc' : 'desc';
+		} else {
+			historySort[id] = col;
+			historyOrder[id] = 'desc';
+		}
+		historyPage[id] = 0;
+		loadHistory(id);
+	}
+
+	function setHistoryKind(id: string, kind: string) {
+		historyKind[id] = kind;
+		historyPage[id] = 0;
+		loadHistory(id);
+	}
+
+	function historyPageUp(id: string) {
+		if (((historyPage[id] || 0) + 1) * 20 < (historyTotal[id] || 0)) {
+			historyPage[id] = (historyPage[id] || 0) + 1;
+			loadHistory(id);
+		}
+	}
+
+	function historyPageDown(id: string) {
+		if ((historyPage[id] || 0) > 0) {
+			historyPage[id] = (historyPage[id] || 0) - 1;
+			loadHistory(id);
+		}
+	}
+
+	async function openRun(runId: string) {
+		try {
+			const r = await fetchProviderTest(runId);
+			historyRun = { ...historyRun, [runId]: r };
+		} catch (e: any) {
+			showToast(e.message, 'error');
+		}
+	}
+
+	function closeRun(runId: string) {
+		const updated = { ...historyRun };
+		delete updated[runId];
+		historyRun = updated;
+	}
+
 	function toggle(id: string) {
 		expanded[id] = !expanded[id];
 		if (expanded[id] && !providerKeys[id]) loadKeys(id);
@@ -278,6 +363,7 @@
 						{busyDiscover[p.id] ? '…' : 'Test all'}
 					</Button>
 					<Button variant="ghost" size="sm" onclick={() => test(p.id)}><Play class="w-3.5 h-3.5" /></Button>
+					<Button variant="ghost" size="sm" onclick={() => toggleHistory(p.id)}><History class="w-3.5 h-3.5" /></Button>
 					<Button variant="danger" size="sm" onclick={() => remove(p.id)}><Trash2 class="w-3.5 h-3.5" /></Button>
 				</td>
 			</tr>
@@ -365,6 +451,87 @@
 											<button onclick={() => testModel(p.id, m.internal_model)} class="ml-1 text-(--accent-hover) hover:text-(--accent)">Test</button>
 										</div>
 									{/each}
+								</div>
+							{/if}
+
+							{#if historyOpen[p.id]}
+								<div class="mt-3 rounded-lg border border-(--border) bg-(--bg-card) p-3">
+									<h3 class="text-xs font-semibold text-(--text-muted) mb-2 flex items-center gap-2">
+										<History class="w-3.5 h-3.5" />
+										Test History
+										<span class="ml-auto text-(--text-faint) tabular-nums">{historyTotal[p.id] ?? 0} runs</span>
+									</h3>
+									<div class="flex flex-wrap gap-2 mb-2">
+										<div class="flex gap-1">
+											<Button variant={!historyKind[p.id] ? 'primary' : 'secondary'} size="sm" onclick={() => setHistoryKind(p.id, '')}>All</Button>
+											<Button variant={historyKind[p.id] === 'discover' ? 'primary' : 'secondary'} size="sm" onclick={() => setHistoryKind(p.id, 'discover')}>Discover</Button>
+											<Button variant={historyKind[p.id] === 'test' ? 'primary' : 'secondary'} size="sm" onclick={() => setHistoryKind(p.id, 'test')}>Test</Button>
+										</div>
+										<div class="flex gap-1 ml-auto">
+											<Button variant={historySort[p.id] === 'created_at' ? 'primary' : 'secondary'} size="sm" onclick={() => sortHistory(p.id, 'created_at')}>Date {historyOrder[p.id] === 'desc' ? '↓' : '↑'}</Button>
+											<Button variant={historySort[p.id] === 'ok_count' ? 'primary' : 'secondary'} size="sm" onclick={() => sortHistory(p.id, 'ok_count')}>OK {historyOrder[p.id] === 'desc' ? '↓' : '↑'}</Button>
+										</div>
+									</div>
+									<div class="overflow-x-auto">
+										<table class="w-full text-sm">
+											<thead>
+												<tr class="text-left text-(--text-muted) border-b border-(--border)">
+													<th class="py-2">Date</th>
+													<th>Kind</th>
+													<th>OK</th>
+													<th>Total</th>
+													<th></th>
+												</tr>
+											</thead>
+											<tbody>
+												{#each historyItems[p.id] || [] as run}
+													<tr class="border-b border-(--border)/50 hover:bg-(--bg-hover)">
+														<td class="py-1.5 text-(--text-muted) tabular-nums">{new Date(run.created_at).toLocaleString()}</td>
+														<td><Badge variant={run.kind === 'test' ? 'accent' : 'default'}>{run.kind}</Badge></td>
+														<td class="tabular-nums">{run.ok_count}</td>
+														<td class="tabular-nums">{run.total}</td>
+														<td class="text-right">
+															<Button variant="ghost" size="sm" onclick={() => openRun(run.id)}>View</Button>
+														</td>
+													</tr>
+													{#if historyRun[run.id]}
+														<tr class="bg-(--bg-card)">
+															<td colspan="5" class="py-2">
+																<div class="flex justify-between items-center mb-1">
+																	<span class="text-xs text-(--text-muted)">Models — {historyRun[run.id].total}</span>
+																	<button onclick={() => closeRun(run.id)} class="text-(--text-faint) hover:text-(--text-muted)"><X class="w-3.5 h-3.5" /></button>
+																</div>
+																<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1 max-h-48 overflow-auto">
+																	{#each (historyRun[run.id].result?.models || []) as m}
+																		<div class="flex items-center gap-2 rounded bg-(--bg-elevated) border border-(--border) px-2 py-1 text-xs" title={m.error || m.internal_model}>
+																			{#if m.category === 'premium'}
+																				<Badge variant="warning">premium</Badge>
+																			{:else if m.category === 'rate_limited'}
+																				<Badge variant="warning">r.limit</Badge>
+																			{:else}
+																				<Badge variant={m.ok ? 'success' : 'danger'}>{m.ok ? 'ok' : 'err'}</Badge>
+																			{/if}
+																			<span class="text-(--text-muted) truncate">{m.internal_model}</span>
+																			{#if m.latency_ms}
+																				<span class="text-(--text-faint) ml-auto tabular-nums">{m.latency_ms}ms</span>
+																			{/if}
+																		</div>
+																	{/each}
+																</div>
+															</td>
+														</tr>
+													{/if}
+												{/each}
+												{#if (historyItems[p.id] || []).length === 0}
+													<tr><td colspan="5" class="py-3 text-center text-(--text-faint)">No test runs yet</td></tr>
+												{/if}
+											</tbody>
+										</table>
+									</div>
+									<div class="flex gap-2 mt-2">
+										<Button variant="secondary" size="sm" onclick={() => historyPageDown(p.id)} disabled={!historyPage[p.id]}>← Prev</Button>
+										<Button variant="secondary" size="sm" onclick={() => historyPageUp(p.id)} disabled={((historyPage[p.id] || 0) + 1) * 20 >= (historyTotal[p.id] || 0)}>Next →</Button>
+									</div>
 								</div>
 							{/if}
 						</div>

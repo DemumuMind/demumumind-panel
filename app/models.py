@@ -187,6 +187,23 @@ class Plugin(Base):
     )
 
 
+class ProviderTestRun(Base):
+    __tablename__ = "provider_test_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    provider_id: Mapped[str] = mapped_column(
+        String, ForeignKey("providers.id", ondelete="CASCADE"), index=True
+    )
+    provider_name: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, default="test", index=True)  # discover | test
+    result: Mapped[str] = mapped_column(Text, default="{}")
+    ok_count: Mapped[int] = mapped_column(Integer, default=0)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
 __all__ = [
     "Base",
     "Provider",
@@ -199,4 +216,5 @@ __all__ = [
     "AgentUsage",
     "ProviderKey",
     "Plugin",
+    "ProviderTestRun",
 ]

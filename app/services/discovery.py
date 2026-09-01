@@ -14,11 +14,12 @@ from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import UpstreamError
-from app.models import Model, Provider
+from app.models import Model, Provider, ProviderTestRun
 from app.schemas import DiscoveredModelStatus, ModelDiscoveryResult
 from app.services.failover import classify
 from app.services.pool import get_pool
@@ -296,6 +297,38 @@ async def discover_and_test(
     )
 
 
+async def _save_test_run(
+    session: AsyncSession, provider: Provider, kind: str, result: ModelDiscoveryResult
+) -> None:
+    """Persist a test/discover run to history, capped at 100 runs per provider."""
+    session.add(
+        ProviderTestRun(
+            provider_id=provider.id,
+            provider_name=provider.name,
+            kind=kind,
+            result=json.dumps(result.model_dump(), ensure_ascii=False),
+            ok_count=result.ok_count,
+            total=result.total,
+        )
+    )
+    # cap: delete oldest beyond the newest 100 for this provider
+    total = await session.execute(
+        select(func.count()).select_from(ProviderTestRun).where(ProviderTestRun.provider_id == provider.id)
+    )
+    count = int(total.scalar_one() or 0)
+    if count > 100:
+        excess = await session.execute(
+            select(ProviderTestRun.id)
+            .where(ProviderTestRun.provider_id == provider.id)
+            .order_by(ProviderTestRun.created_at.desc())
+            .offset(100)
+        )
+        ids = [row[0] for row in excess.all()]
+        if ids:
+            await session.execute(sa_delete(ProviderTestRun).where(ProviderTestRun.id.in_(ids)))
+            logger.info("discovery.test_run_capped", provider=provider.name, removed=len(ids))
+
+
 async def discover_and_test_stream(
     provider: Provider, session: AsyncSession, request_id: str, test: bool = False
 ) -> AsyncIterator[dict[str, Any]]:
@@ -342,8 +375,6 @@ async def discover_and_test_stream(
             yield {"event": "import", "current": imported + skipped, "total": total, "model": mid, "status": "skipped"}
 
     if not test:
-        await session.commit()
-        await get_manager().refresh()
         statuses = [
             DiscoveredModelStatus(internal_model=mid, ok=True, category="listed") for mid in discovered
         ]
@@ -356,6 +387,9 @@ async def discover_and_test_stream(
             ok_count=len(discovered),
             models=statuses,
         )
+        await _save_test_run(session, provider, kind="discover", result=result)
+        await session.commit()
+        await get_manager().refresh()
         yield {"event": "done", "result": result.model_dump()}
         return
 
@@ -392,8 +426,6 @@ async def discover_and_test_stream(
                     mmeta["premium"] = True
                     model_obj.meta = json.dumps(mmeta)
 
-    await session.commit()
-    await get_manager().refresh()
     ordered = [status_map[mid] for mid in discovered]
     result = ModelDiscoveryResult(
         provider_id=provider.id,
@@ -404,6 +436,9 @@ async def discover_and_test_stream(
         ok_count=sum(1 for s in ordered if s.ok),
         models=ordered,
     )
+    await _save_test_run(session, provider, kind="test", result=result)
+    await session.commit()
+    await get_manager().refresh()
     yield {"event": "done", "result": result.model_dump()}
 
 

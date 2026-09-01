@@ -378,6 +378,17 @@ class McpPermissionOut(BaseModel):
     created_at: datetime
 
 
+class ProviderTestRunOut(BaseModel):
+    id: str
+    provider_id: str
+    provider_name: str
+    kind: str
+    ok_count: int
+    total: int
+    created_at: datetime
+    result: dict[str, Any] | None = None
+
+
 __all__ = [
     "ErrorResponse",
     "PaginatedResponse",
@@ -414,4 +425,5 @@ __all__ = [
     "CreateMcpPermissionRequest",
     "McpServerOut",
     "McpPermissionOut",
+    "ProviderTestRunOut",
 ]
