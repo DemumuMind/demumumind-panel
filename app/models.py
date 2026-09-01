@@ -154,6 +154,7 @@ class AgentUsage(Base):
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     is_free: Mapped[int] = mapped_column(Integer, default=0)
+    unlimited: Mapped[int] = mapped_column(Integer, default=0)
     price_known: Mapped[int] = mapped_column(Integer, default=0)
     cache_hit: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(

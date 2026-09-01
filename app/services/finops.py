@@ -60,6 +60,7 @@ class FinopsService:
         tokens_out: int,
         cost_usd: float,
         is_free: bool = False,
+        unlimited: bool = False,
         price_known: bool = False,
         cache_hit: bool = False,
     ) -> None:
@@ -71,6 +72,7 @@ class FinopsService:
             tokens_out=tokens_out,
             cost_usd=cost_usd,
             is_free=1 if is_free else 0,
+            unlimited=1 if unlimited else 0,
             price_known=1 if price_known else 0,
             cache_hit=1 if cache_hit else 0,
         )
@@ -85,6 +87,7 @@ class FinopsService:
             func.sum(AgentUsage.cost_usd).label("cost_usd"),
             func.count(AgentUsage.id).label("requests"),
             func.coalesce(func.sum(AgentUsage.is_free), 0).label("free_requests"),
+            func.coalesce(func.sum(AgentUsage.unlimited), 0).label("unlimited_requests"),
             func.coalesce(func.sum(sa.case((AgentUsage.price_known == 0, 1), else_=0)), 0).label("unknown_requests"),
             func.coalesce(func.sum(AgentUsage.cache_hit), 0).label("cached_requests"),
         ).group_by(AgentUsage.agent_type)
@@ -99,6 +102,7 @@ class FinopsService:
                 cost_usd=float(r.cost_usd or 0.0),
                 requests=int(r.requests or 0),
                 free_requests=int(r.free_requests or 0),
+                unlimited_requests=int(r.unlimited_requests or 0),
                 unknown_requests=int(r.unknown_requests or 0),
                 cached_requests=int(r.cached_requests or 0),
             )
@@ -116,6 +120,7 @@ class FinopsService:
             func.sum(AgentUsage.cost_usd).label("cost_usd"),
             func.count(AgentUsage.id).label("requests"),
             func.coalesce(func.sum(AgentUsage.is_free), 0).label("free_requests"),
+            func.coalesce(func.sum(AgentUsage.unlimited), 0).label("unlimited_requests"),
             func.coalesce(func.sum(sa.case((AgentUsage.price_known == 0, 1), else_=0)), 0).label("unknown_requests"),
             func.coalesce(func.sum(AgentUsage.cache_hit), 0).label("cached_requests"),
         ).where(AgentUsage.created_at >= cutoff_naive).group_by("d").order_by("d")
@@ -128,6 +133,7 @@ class FinopsService:
                 cost_usd=float(r.cost_usd or 0.0),
                 requests=int(r.requests or 0),
                 free_requests=int(r.free_requests or 0),
+                unlimited_requests=int(r.unlimited_requests or 0),
                 unknown_requests=int(r.unknown_requests or 0),
                 cached_requests=int(r.cached_requests or 0),
             )
@@ -147,6 +153,7 @@ class FinopsService:
                 func.sum(AgentUsage.cost_usd).label("cost_usd"),
                 func.count(AgentUsage.id).label("requests"),
                 func.coalesce(func.sum(AgentUsage.is_free), 0).label("free_requests"),
+                func.coalesce(func.sum(AgentUsage.unlimited), 0).label("unlimited_requests"),
                 func.coalesce(
                     func.sum(sa.case((AgentUsage.price_known == 0, 1), else_=0)), 0
                 ).label("unknown_requests"),
@@ -166,6 +173,7 @@ class FinopsService:
                 cost_usd=float(r.cost_usd or 0.0),
                 requests=int(r.requests or 0),
                 free_requests=int(r.free_requests or 0),
+                unlimited_requests=int(r.unlimited_requests or 0),
                 unknown_requests=int(r.unknown_requests or 0),
                 cached_requests=int(r.cached_requests or 0),
             )

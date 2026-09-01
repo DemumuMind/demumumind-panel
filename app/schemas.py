@@ -305,6 +305,7 @@ class AgentUsageOut(BaseModel):
     cost_usd: float
     requests: int
     free_requests: int = 0
+    unlimited_requests: int = 0
     unknown_requests: int = 0
     cached_requests: int = 0
 
@@ -316,6 +317,7 @@ class UsageRowOut(BaseModel):
     cost_usd: float
     requests: int
     free_requests: int = 0
+    unlimited_requests: int = 0
     unknown_requests: int = 0
     cached_requests: int = 0
 
@@ -327,6 +329,7 @@ class UsagePoint(BaseModel):
     cost_usd: float
     requests: int
     free_requests: int = 0
+    unlimited_requests: int = 0
     unknown_requests: int = 0
     cached_requests: int = 0
 

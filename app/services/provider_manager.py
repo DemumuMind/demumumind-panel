@@ -88,6 +88,11 @@ class ModelRecord:
     def is_free(self) -> bool:
         return bool((self.metadata or {}).get("free"))
 
+    @property
+    def limits(self) -> dict[str, Any] | None:
+        raw = (self.metadata or {}).get("limits")
+        return raw if isinstance(raw, dict) and raw else None
+
 
 @dataclass
 class ResolvedModel:
@@ -101,6 +106,7 @@ class ResolvedModel:
     model_id: str | None = None
     pricing: dict[str, float] | None = None
     is_free: bool = False
+    limits: dict[str, Any] | None = None
 
 
 class ProviderManager:
@@ -203,6 +209,7 @@ class ProviderManager:
             model_id=record.id,
             pricing=record.pricing,
             is_free=record.is_free,
+            limits=record.limits,
         )
 
     async def list_available_models_detailed(

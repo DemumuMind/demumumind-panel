@@ -126,6 +126,11 @@ def _is_free_model(resolved: ResolvedModel | None) -> bool:
     return bool(resolved and resolved.is_free)
 
 
+def _is_unlimited_model(resolved: ResolvedModel | None) -> bool:
+    """Free model with no disclosed limits (requests/min/day or per-request caps)."""
+    return bool(resolved and resolved.is_free and not resolved.limits)
+
+
 def _to_provider(resolved: ResolvedModel, api_key: str | None = None) -> Provider:
     return Provider(
         id=resolved.provider_id,
@@ -222,6 +227,7 @@ async def chat_completion(
                 tokens_out=0,
                 cost_usd=0.0,
                 is_free=_is_free_model(resolved),
+                unlimited=_is_unlimited_model(resolved),
                 price_known=bool(resolved and resolved.pricing),
                 cache_hit=True,
             )
@@ -251,6 +257,7 @@ async def chat_completion(
         tokens_out=tokens_out,
         cost_usd=cost,
         is_free=is_free,
+        unlimited=_is_unlimited_model(resolved),
         price_known=price_known,
         cache_hit=False,
     )
@@ -275,6 +282,7 @@ async def _record_db_usage(
     tokens_out: int,
     cost_usd: float,
     is_free: bool,
+    unlimited: bool = False,
     price_known: bool,
     cache_hit: bool,
 ) -> None:
@@ -289,6 +297,7 @@ async def _record_db_usage(
                 tokens_out=tokens_out,
                 cost_usd=cost_usd,
                 is_free=is_free,
+                unlimited=unlimited,
                 price_known=price_known,
                 cache_hit=cache_hit,
             )
@@ -360,6 +369,7 @@ async def _record_stream_db_usage(
         tokens_out=tokens_out,
         cost_usd=cost,
         is_free=is_free,
+        unlimited=_is_unlimited_model(resolved),
         price_known=price_known,
         cache_hit=False,
     )
@@ -396,6 +406,7 @@ async def chat_completion_stream(
                 tokens_out=0,
                 cost_usd=0.0,
                 is_free=_is_free_model(resolved),
+                unlimited=_is_unlimited_model(resolved),
                 price_known=bool(resolved and resolved.pricing),
                 cache_hit=True,
             )

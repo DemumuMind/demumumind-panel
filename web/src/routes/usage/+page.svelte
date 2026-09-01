@@ -42,13 +42,15 @@
 		if (u.unknown_requests === u.requests) {
 			return { text: '—', cls: 'text-(--text-faint)', title: 'Cost not disclosed by provider' };
 		}
+		if (u.unlimited_requests === u.requests) {
+			return { text: 'Free · Безлимит', cls: 'text-emerald-400', title: 'Free / unlimited' };
+		}
 		if (u.free_requests === u.requests) {
-			return { text: 'Free', cls: 'text-emerald-400', title: 'All requests were free / unlimited' };
+			return { text: 'Free', cls: 'text-emerald-400', title: 'Free (limited)' };
 		}
 		if (u.cost_usd > 0.000001) {
 			return { text: `$${u.cost_usd.toFixed(6)}`, cls: 'tabular-nums', title: `Total cost: $${u.cost_usd.toFixed(6)}` };
 		}
-		// mixed: free + unknown, zero cost
 		return { text: 'Free/—', cls: 'text-(--text-faint)', title: 'Free + cost unknown' };
 	}
 </script>
@@ -102,7 +104,9 @@
 						{#if u.cached_requests > 0}
 							<Badge variant="info" dot>cached</Badge>
 						{/if}
-						{#if u.free_requests === u.requests}
+						{#if u.unlimited_requests === u.requests}
+							<Badge variant="success" dot>Free · Безлимит</Badge>
+						{:else if u.free_requests === u.requests}
 							<Badge variant="success" dot>Free</Badge>
 						{/if}
 						{#if u.unknown_requests > 0 && u.unknown_requests === u.requests}
@@ -149,7 +153,9 @@
 						{#if u.cached_requests > 0}
 							<Badge variant="info" dot>cached</Badge>
 						{/if}
-						{#if u.free_requests === u.requests}
+						{#if u.unlimited_requests === u.requests}
+							<Badge variant="success" dot>Free · Безлимит</Badge>
+						{:else if u.free_requests === u.requests}
 							<Badge variant="success" dot>Free</Badge>
 						{/if}
 						{#if u.unknown_requests > 0 && u.unknown_requests === u.requests}

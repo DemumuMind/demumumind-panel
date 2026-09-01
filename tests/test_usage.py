@@ -7,7 +7,12 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.services.discovery import parse_model_items
-from app.services.dispatch import _compute_cost_from_pricing, _cost_from_usage, _resolve_cost
+from app.services.dispatch import (
+    _compute_cost_from_pricing,
+    _cost_from_usage,
+    _is_unlimited_model,
+    _resolve_cost,
+)
 from app.services.finops import get_finops
 from app.services.provider_manager import ResolvedModel
 from tests.conftest import ADMIN_HEADERS
@@ -125,6 +130,21 @@ async def test_parse_model_items_limits() -> None:
 # --- aggregation with new columns ---
 
 
+async def test_is_unlimited_free_no_limits() -> None:
+    r = _resolved(is_free=True, limits=None)
+    assert _is_unlimited_model(r) is True
+
+
+async def test_is_unlimited_free_with_limits() -> None:
+    r = _resolved(is_free=True, limits={"requests_per_minute": 20})
+    assert _is_unlimited_model(r) is False
+
+
+async def test_is_unlimited_not_free() -> None:
+    r = _resolved(is_free=False)
+    assert _is_unlimited_model(r) is False
+
+
 async def test_usage_aggregation_columns(client: AsyncClient, db_session) -> None:
     finops = get_finops()
     await finops.record_usage(
@@ -136,6 +156,7 @@ async def test_usage_aggregation_columns(client: AsyncClient, db_session) -> Non
         tokens_out=50,
         cost_usd=0.0,
         is_free=True,
+        unlimited=True,
         price_known=True,
         cache_hit=False,
     )
@@ -148,6 +169,7 @@ async def test_usage_aggregation_columns(client: AsyncClient, db_session) -> Non
         tokens_out=0,
         cost_usd=0.0,
         is_free=False,
+        unlimited=False,
         price_known=False,
         cache_hit=True,
     )
@@ -158,6 +180,7 @@ async def test_usage_aggregation_columns(client: AsyncClient, db_session) -> Non
     row = data["items"][0]
     assert row["requests"] == 2
     assert row["free_requests"] == 1
+    assert row["unlimited_requests"] == 1
     assert row["unknown_requests"] == 1
     assert row["cached_requests"] == 1
 
