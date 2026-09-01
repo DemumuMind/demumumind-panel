@@ -127,6 +127,51 @@ export async function chatCompletions(body: any) {
 	return postJSON<any>('/v1/chat/completions', body);
 }
 
+export async function* streamChat(
+	body: any
+): AsyncGenerator<{ content?: string; reasoning?: string }> {
+	const key = get(panelKey);
+	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+	if (key) headers['Authorization'] = `Bearer ${key}`;
+	const res = await fetch(`${BASE}/v1/chat/completions`, {
+		method: 'POST',
+		headers,
+		body: JSON.stringify({ ...body, stream: true })
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || res.statusText);
+	}
+	if (!res.body) throw new Error('no response stream');
+	const reader = res.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+		const lines = buffer.split('\n');
+		buffer = lines.pop() || '';
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed.startsWith('data:')) continue;
+			const data = trimmed.slice(5).trim();
+			if (data === '[DONE]') return;
+			try {
+				const parsed = JSON.parse(data);
+				const delta = parsed.choices?.[0]?.delta || {};
+				const out: { content?: string; reasoning?: string } = {};
+				if (typeof delta.content === 'string' && delta.content) out.content = delta.content;
+				if (typeof delta.reasoning_content === 'string' && delta.reasoning_content)
+					out.reasoning = delta.reasoning_content;
+				if (out.content !== undefined || out.reasoning !== undefined) yield out;
+			} catch {
+				// skip malformed/keepalive lines
+			}
+		}
+	}
+}
+
 export async function fetchUsage(limit = 100, offset = 0) {
 	return getJSON<{ items: any[]; total: number }>(`/v1/usage?limit=${limit}&offset=${offset}`);
 }

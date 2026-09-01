@@ -3,15 +3,15 @@
 	import Button from '$lib/components/ui/button.svelte';
 	import Select from '$lib/components/ui/select.svelte';
 	import Input from '$lib/components/ui/input.svelte';
-	import { getJSON, chatCompletions } from '$lib/api';
+	import { getJSON, streamChat } from '$lib/api';
 	import { panelKey, showToast } from '$lib/stores';
 	import { get } from 'svelte/store';
 	import { onMount } from 'svelte';
 
 	let models = $state<any[]>([]);
 	let selectedModel = $state('');
-	let messages = $state([{ role: 'user', content: '' }]);
-	let response = $state('');
+	let history = $state<{ role: string; content: string; reasoning?: string }[]>([]);
+	let draft = $state('');
 	let busy = $state(false);
 	let temperature = $state('0.7');
 	let maxTokens = $state('256');
@@ -26,36 +26,49 @@
 		}
 	});
 
-	function addMessage() {
-		messages = [...messages, { role: 'user', content: '' }];
-	}
-
-	function updateMsg(idx: number, field: string, val: string) {
-		const msgs = [...messages];
-		(msgs[idx] as any)[field] = val;
-		messages = msgs;
-	}
-
-	async function send() {
+	function send() {
 		if (!get(panelKey)) {
 			showToast('Login first', 'error');
 			return;
 		}
+		if (!selectedModel || !draft.trim() || busy) return;
 		busy = true;
-		response = '';
+		const userText = draft.trim();
+		draft = '';
+		const userIdx = history.length;
+		history = [...history, { role: 'user', content: userText }];
+		const assistantIdx = history.length;
+		history = [...history, { role: 'assistant', content: '', reasoning: '' }];
+		const messagesForApi = history
+			.slice(0, userIdx + 1)
+			.map((m) => ({ role: m.role, content: m.content }));
+		const temp = parseFloat(temperature.replace(',', '.')) || 0.7;
+		const maxT = parseInt(maxTokens) || undefined;
+		streamIt(messagesForApi, temp, maxT, assistantIdx);
+	}
+
+	async function streamIt(messagesForApi: any[], temp: number, maxT: number | undefined, idx: number) {
 		try {
-			const r = await chatCompletions({
+			for await (const chunk of streamChat({
 				model: selectedModel,
-				messages: messages.filter((m) => m.content.trim()),
-				temperature: parseFloat(temperature),
-				max_tokens: parseInt(maxTokens) || undefined,
-				stream: false
-			});
-			response = JSON.stringify(r, null, 2);
+				messages: messagesForApi,
+				temperature: temp,
+				max_tokens: maxT
+			})) {
+				if (chunk.content) history[idx].content += chunk.content;
+				if (chunk.reasoning) history[idx].reasoning = (history[idx].reasoning || '') + chunk.reasoning;
+			}
 		} catch (e: any) {
-			response = `Error: ${e.message}`;
+			history[idx].content = `Error: ${e.message}`;
 		} finally {
 			busy = false;
+		}
+	}
+
+	function onKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter' && !e.shiftKey) {
+			e.preventDefault();
+			send();
 		}
 	}
 </script>
@@ -74,7 +87,7 @@
 		</div>
 		<div class="w-full sm:w-24">
 			<label for="pg-temp" class="text-xs text-zinc-500 block mb-1">Temp</label>
-			<Input id="pg-temp" type="number" bind:value={temperature} min="0" max="2" step="0.1" />
+			<Input id="pg-temp" type="text" bind:value={temperature} placeholder="0.7" />
 		</div>
 		<div class="w-full sm:w-24">
 			<label for="pg-max" class="text-xs text-zinc-500 block mb-1">Max tokens</label>
@@ -82,36 +95,39 @@
 		</div>
 	</div>
 
-	{#each messages as msg, i}
-		<div class="mb-3">
-			<select
-				class="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 mb-1"
-				value={msg.role}
-				onchange={(e) => updateMsg(i, 'role', (e.target as HTMLSelectElement).value)}
-			>
-				<option value="system">system</option>
-				<option value="user">user</option>
-				<option value="assistant">assistant</option>
-				<option value="tool">tool</option>
-			</select>
-			<textarea
-				class="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-				rows={3}
-				value={msg.content}
-				oninput={(e) => updateMsg(i, 'content', (e.target as HTMLTextAreaElement).value)}
-			></textarea>
-		</div>
-	{/each}
+	<div class="flex flex-col gap-3 mb-4 max-h-[55vh] overflow-auto">
+		{#each history as msg, i}
+			{#if msg.role === 'user'}
+				<div class="self-end max-w-[80%] rounded-xl bg-indigo-700 px-3 py-2 text-sm text-white whitespace-pre-wrap">
+					{msg.content}
+				</div>
+			{:else}
+				<div class="self-start max-w-[85%] rounded-xl bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+					{#if msg.reasoning}
+						<details class="mb-1">
+							<summary class="cursor-pointer text-xs text-zinc-500 select-none">Мысли</summary>
+							<pre class="mt-1 whitespace-pre-wrap text-xs text-zinc-400">{msg.reasoning}</pre>
+						</details>
+					{/if}
+					<div class="whitespace-pre-wrap">{msg.content || (busy && i === history.length - 1 ? '…' : '')}</div>
+				</div>
+			{/if}
+		{/each}
+		{#if history.length === 0}
+			<p class="text-center text-zinc-600 text-sm py-6">Напиши сообщение, чтобы начать чат</p>
+		{/if}
+	</div>
 
-	<div class="flex flex-col sm:flex-row gap-3">
-		<Button onclick={addMessage}>+ Message</Button>
-		<Button onclick={send} disabled={busy || !selectedModel}>{busy ? 'Sending…' : 'Send'}</Button>
+	<div class="flex gap-2 items-end">
+		<textarea
+			class="flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+			rows={2}
+			placeholder="Сообщение… (Enter — отправить)"
+			bind:value={draft}
+			onkeydown={onKeydown}
+		></textarea>
+		<Button onclick={send} disabled={busy || !draft.trim() || !selectedModel}>
+			{busy ? '…' : 'Send'}
+		</Button>
 	</div>
 </Card>
-
-{#if response}
-	<Card>
-		<h2 class="text-sm font-semibold mb-2">Response</h2>
-		<pre class="text-xs text-zinc-300 overflow-auto max-h-96 whitespace-pre-wrap">{response}</pre>
-	</Card>
-{/if}
