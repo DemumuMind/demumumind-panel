@@ -44,6 +44,11 @@ v1_router = APIRouter(prefix="/v1", tags=["v1"])
 PANEL_SENTINEL = "__panel__"
 
 
+def _clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove null-valued keys from messages (strict providers reject null)."""
+    return [{k: v for k, v in m.items() if v is not None} for m in messages]
+
+
 async def require_client_key(request: Request) -> str:
     auth = AuthState(request)
     key_hash = await auth.client_key_hash()
@@ -98,6 +103,8 @@ async def chat_completions(
     request_id = getattr(request.state, "request_id", "")
     agent_type = get_agent_type(request)
     payload = body.model_dump(exclude_none=False)
+    if payload.get("messages"):
+        payload["messages"] = _clean_messages(payload["messages"])
     if body.stream:
         is_cached, cached_sse = await resolve_stream_cache(body.model, key_hash, payload)
         headers = {"X-DM-Cache": "hit"} if is_cached else None
@@ -136,15 +143,21 @@ async def anthropic_messages(
 ) -> Any:
     request_id = getattr(request.state, "request_id", "")
     agent_type = get_agent_type(request)
+    payload = body.model_dump(exclude_none=False)
+    if payload.get("messages"):
+        payload["messages"] = _clean_messages(payload["messages"])
+    marker = CacheMarker()
     result = await chat_completion(
         request_id=request_id,
         key_hash=key_hash,
         agent_type=agent_type,
         protocol="anthropic",
         model=body.model,
-        body=body.model_dump(exclude_none=False),
+        body=payload,
+        marker=marker,
     )
-    return JSONResponse(result)
+    resp_headers = {"X-DM-Cache": "hit"} if marker.hit else None
+    return JSONResponse(result, headers=resp_headers)
 
 
 @v1_router.post("/v1beta/models/{model}:generateContent")
@@ -157,7 +170,12 @@ async def gemini_generate_content(
     request_id = getattr(request.state, "request_id", "")
     agent_type = get_agent_type(request)
     payload = body.model_dump(exclude_none=False)
+    if payload.get("contents"):
+        for c in payload["contents"]:
+            if isinstance(c, dict) and isinstance(c.get("parts"), list):
+                c["parts"] = [{k: v for k, v in p.items() if v is not None} for p in c["parts"] if isinstance(p, dict)]
     payload["model"] = model
+    marker = CacheMarker()
     result = await chat_completion(
         request_id=request_id,
         key_hash=key_hash,
@@ -165,8 +183,10 @@ async def gemini_generate_content(
         protocol="gemini",
         model=model,
         body=payload,
+        marker=marker,
     )
-    return JSONResponse(result)
+    resp_headers = {"X-DM-Cache": "hit"} if marker.hit else None
+    return JSONResponse(result, headers=resp_headers)
 
 
 @v1_router.get("/models")
@@ -174,8 +194,9 @@ async def list_models(
     key_hash: KeyHashDep,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    provider: str | None = Query(default=None),
 ) -> PaginatedResponse[dict[str, Any]]:
-    return await get_router().list_models_detailed(limit, offset)
+    return await get_router().list_models_detailed(limit, offset, provider)
 
 
 @v1_router.get("/agents")
@@ -205,6 +226,16 @@ async def usage_timeseries(
 ) -> list[Any]:
     async with AsyncSessionLocal() as session:
         return await get_finops().usage_timeseries(session, days)
+
+
+@v1_router.get("/usage/by-provider")
+async def usage_by_provider(
+    key_hash: KeyHashDep,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> PaginatedResponse[Any]:
+    async with AsyncSessionLocal() as session:
+        return await get_finops().usage_by_provider(session, limit, offset)
 
 
 __all__ = ["root_router", "v1_router", "limiter"]

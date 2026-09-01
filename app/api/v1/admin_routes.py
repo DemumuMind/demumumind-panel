@@ -389,9 +389,15 @@ async def list_models(
     session: SessionDep,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    provider_id: str | None = Query(default=None),
 ) -> PaginatedResponse[ModelOut]:
-    total = int((await session.execute(select(func.count()).select_from(Model))).scalar_one() or 0)
-    rows = await session.execute(select(Model).order_by(Model.created_at).limit(limit).offset(offset))
+    base = select(Model)
+    count_base = select(func.count()).select_from(Model)
+    if provider_id:
+        base = base.where(Model.provider_id == provider_id)
+        count_base = count_base.where(Model.provider_id == provider_id)
+    total = int((await session.execute(count_base)).scalar_one() or 0)
+    rows = await session.execute(base.order_by(Model.created_at).limit(limit).offset(offset))
     items = [ModelOut.model_validate(m) for m in rows.scalars().all()]
     return PaginatedResponse[ModelOut](items=items, total=total, limit=limit, offset=offset)
 

@@ -11,6 +11,8 @@
 	import { Play, Send, Trash2, FileDown, FileJson } from 'lucide-svelte';
 
 	let models = $state<any[]>([]);
+	let providers = $state<string[]>([]);
+	let selectedProvider = $state('');
 	let selectedModel = $state('');
 	let modelFilter = $state('');
 	let history = $state<{ role: string; content: string; reasoning?: string; usage?: ChatUsage; cached?: boolean }[]>([]);
@@ -21,20 +23,34 @@
 	let cacheEnabled = $state(false);
 
 	let filteredModels = $derived(
-		modelFilter
-			? models.filter((m) => m.user_model_id.toLowerCase().includes(modelFilter.toLowerCase()))
-			: models
+		models.filter((m) => {
+			if (modelFilter && !m.user_model_id.toLowerCase().includes(modelFilter.toLowerCase())) return false;
+			return true;
+		})
 	);
 
-	onMount(async () => {
+	async function loadModels(providerId?: string) {
 		try {
-			const data = await getJSON<any>('/v1/models?limit=200&offset=0');
+			const q = providerId ? `/v1/models?limit=1000&offset=0&provider=${encodeURIComponent(providerId)}` : '/v1/models?limit=1000&offset=0';
+			const data = await getJSON<any>(q);
 			models = data.items || [];
+			const provSet = new Set<string>();
+			for (const m of models) {
+				if (m.provider?.name) provSet.add(m.provider.name);
+			}
+			providers = Array.from(provSet).sort();
 			if (models.length) selectedModel = models[0].user_model_id;
 		} catch (e: any) {
 			showToast(e.message, 'error');
 		}
-	});
+	}
+
+	onMount(() => loadModels());
+
+	function onProviderChange(pid: string) {
+		selectedProvider = pid;
+		loadModels(pid);
+	}
 
 	function send() {
 		if (!get(panelKey)) {
@@ -145,7 +161,14 @@
 <Card class="mb-6">
 	<div class="flex flex-col sm:flex-row gap-3 mb-4 items-end">
 		<div class="flex-1 w-full">
-			<label for="pg-model" class="text-xs text-(--text-muted) block mb-1">Model</label>
+			<label for="pg-provider" class="text-xs text-(--text-muted) block mb-1">Provider</label>
+			<Select id="pg-provider" value={selectedProvider} onchange={(ev: Event) => onProviderChange((ev.target as HTMLSelectElement).value)}>
+				<option value="">All providers</option>
+				{#each providers as p}
+					<option value={p}>{p}</option>
+				{/each}
+			</Select>
+			<label for="pg-model" class="text-xs text-(--text-muted) block mb-1 mt-2">Model</label>
 			<Select id="pg-model" bind:value={selectedModel}>
 				{#each filteredModels as m}
 					<option value={m.user_model_id}>{m.user_model_id} ({m.provider?.name})</option>
