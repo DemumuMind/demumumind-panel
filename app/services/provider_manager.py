@@ -18,7 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import AsyncSessionLocal
-from app.models import ApiKey, Model, Provider, ProviderKey
+from app.models import AgentUsage, ApiKey, Model, Provider, ProviderKey
 from app.schemas import CreateModelRequest, CreateProviderRequest, PaginatedResponse, UpdateProviderRequest
 
 logger = structlog.get_logger(__name__)
@@ -325,7 +325,32 @@ class ProviderManager:
             await session.commit()
             await session.refresh(model)
             await self.refresh()
+            await self._reconcile_usage_by_model(session, model, pricing, mmeta.get("free", False))
         return model
+
+    async def _reconcile_usage_by_model(
+        self, session: AsyncSession, model: Model, pricing: dict[str, float], is_free: bool
+    ) -> None:
+        """Recompute cost_usd/is_free/price_known for all usage rows of this model."""
+        p = pricing.get("prompt", 0.0) if pricing else 0.0
+        c = pricing.get("completion", 0.0) if pricing else 0.0
+        r = pricing.get("request", 0.0) if pricing else 0.0
+        has_pricing = bool(pricing)
+        rows = await session.execute(
+            select(AgentUsage).where(
+                AgentUsage.model_id == model.id,
+                AgentUsage.price_known == 0,
+            )
+        )
+        for row in rows.scalars().all():
+            if has_pricing:
+                row.cost_usd = row.tokens_in * p + row.tokens_out * c + r
+                row.price_known = 1
+            else:
+                row.cost_usd = 0.0
+                row.price_known = 0
+            row.is_free = 1 if is_free else 0
+        await session.commit()
 
 
 _manager: ProviderManager | None = None

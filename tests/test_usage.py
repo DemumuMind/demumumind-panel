@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from app.services.discovery import parse_model_items
 from app.services.dispatch import _compute_cost_from_pricing, _cost_from_usage, _resolve_cost
@@ -228,6 +229,51 @@ async def test_update_model_pricing_preserves_manual(client: AsyncClient, monkey
     meta = mr.json()["items"][0]["metadata"]
     assert meta["price_source"] == "manual"
     assert meta["pricing"]["prompt"] == 5e-6  # unchanged despite provider saying 0
+
+
+async def test_manual_pricing_reconciles_existing_rows(client: AsyncClient, db_session) -> None:
+    """Setting manual pricing on a model recomputes its existing usage rows."""
+    from app.models import AgentUsage
+    from app.services.finops import get_finops
+
+    rp = await client.post(
+        "/v1/admin/providers",
+        headers=ADMIN_HEADERS,
+        json={"name": "ReconcileProv", "base_url": "https://r.test/v1", "api_key": "sk", "protocol": "openai"},
+    )
+    provider_id = rp.json()["id"]
+    rm = await client.post(
+        "/v1/admin/models",
+        headers=ADMIN_HEADERS,
+        json={"provider_id": provider_id, "user_model_id": "m-recon", "internal_model": "m-recon"},
+    )
+    model_id = rm.json()["id"]
+
+    finops = get_finops()
+    await finops.record_usage(
+        db_session,
+        agent_type="key_x",
+        provider_id=provider_id,
+        model_id=model_id,
+        tokens_in=1000,
+        tokens_out=500,
+        cost_usd=0.0,
+        is_free=False,
+        price_known=False,
+    )
+
+    resp = await client.patch(
+        f"/v1/admin/models/{model_id}/pricing",
+        headers=ADMIN_HEADERS,
+        json={"price_prompt_per_token": 1e-6, "price_completion_per_token": 2e-6, "free": True},
+    )
+    assert resp.status_code == 200
+
+    rows = (await db_session.execute(select(AgentUsage).where(AgentUsage.model_id == model_id))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].price_known == 1
+    assert rows[0].is_free == 1
+    assert rows[0].cost_usd == pytest.approx(0.001 + 0.001)
 
 
 __all__: list[str] = []
