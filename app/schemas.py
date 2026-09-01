@@ -314,6 +314,14 @@ class UsageRowOut(BaseModel):
     requests: int
 
 
+class UsagePoint(BaseModel):
+    date: str
+    tokens_in: int
+    tokens_out: int
+    cost_usd: float
+    requests: int
+
+
 class PluginOut(BaseModel):
     name: str
     signature_valid: bool
@@ -398,6 +406,7 @@ __all__ = [
     "LoginRequest",
     "AgentUsageOut",
     "UsageRowOut",
+    "UsagePoint",
     "PluginOut",
     "PluginInvokeRequest",
     "PluginInvokeResult",
