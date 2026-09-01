@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 import structlog
@@ -295,4 +296,121 @@ async def discover_and_test(
     )
 
 
-__all__ = ["parse_model_list", "discover_provider_models", "test_provider_model", "discover_and_test"]
+async def discover_and_test_stream(
+    provider: Provider, session: AsyncSession, request_id: str, test: bool = False
+) -> AsyncIterator[dict[str, Any]]:
+    """Discover + optional full test, yielding live SSE progress events.
+
+    Events:
+      {"event":"stage","stage":"listing"}
+      {"event":"stage","stage":"import","total":N}
+      {"event":"import","current":i,"total":N,"model":m,"status":"imported|skipped"}
+      {"event":"stage","stage":"test","total":N}            (only when test=True)
+      {"event":"test","current":i,"total":N,"model":m,"ok":b,"category":c,"error":e,"latency_ms":ms}
+      {"event":"done","result":{...ModelDiscoveryResult...}}
+    """
+    yield {"event": "stage", "stage": "listing", "message": "Fetching models…"}
+    discovered = await discover_provider_models(provider, request_id)
+    imported = 0
+    skipped = 0
+    model_ids: dict[str, Model] = {}
+    total = len(discovered)
+    yield {"event": "stage", "stage": "import", "total": total}
+    for mid in discovered:
+        row = await session.execute(
+            select(Model).where(
+                Model.provider_id == provider.id,
+                Model.user_model_id == mid,
+            ).limit(1)
+        )
+        existing = row.scalar_one_or_none()
+        if existing is None:
+            m = Model(
+                provider_id=provider.id,
+                user_model_id=mid,
+                internal_model=mid,
+                is_active=1,
+                meta="{}",
+            )
+            session.add(m)
+            imported += 1
+            model_ids[mid] = m
+            yield {"event": "import", "current": imported + skipped, "total": total, "model": mid, "status": "imported"}
+        else:
+            skipped += 1
+            model_ids[mid] = existing
+            yield {"event": "import", "current": imported + skipped, "total": total, "model": mid, "status": "skipped"}
+
+    if not test:
+        await session.commit()
+        await get_manager().refresh()
+        statuses = [
+            DiscoveredModelStatus(internal_model=mid, ok=True, category="listed") for mid in discovered
+        ]
+        result = ModelDiscoveryResult(
+            provider_id=provider.id,
+            provider_name=provider.name,
+            total=len(discovered),
+            imported=imported,
+            skipped=skipped,
+            ok_count=len(discovered),
+            models=statuses,
+        )
+        yield {"event": "done", "result": result.model_dump()}
+        return
+
+    # full test: bounded concurrency + live events as each completes
+    yield {"event": "stage", "stage": "test", "total": total}
+    sem = asyncio.Semaphore(2)
+
+    async def _test(mid: str) -> tuple[str, DiscoveredModelStatus]:
+        async with sem:
+            status = await test_provider_model(provider, mid, request_id)
+            await asyncio.sleep(0.2)  # stagger
+            return mid, status
+
+    tasks = [asyncio.create_task(_test(mid)) for mid in discovered]
+    status_map: dict[str, DiscoveredModelStatus] = {}
+    for done_count, coro in enumerate(asyncio.as_completed(tasks), 1):
+        mid, status = await coro
+        status_map[mid] = status
+        yield {
+            "event": "test",
+            "current": done_count,
+            "total": total,
+            "model": mid,
+            "ok": status.ok,
+            "category": status.category,
+            "error": status.error,
+            "latency_ms": status.latency_ms,
+        }
+        if status.category == "premium":
+            model_obj = model_ids.get(mid)
+            if model_obj is not None:
+                mmeta = json.loads(model_obj.meta or "{}")
+                if not mmeta.get("premium"):
+                    mmeta["premium"] = True
+                    model_obj.meta = json.dumps(mmeta)
+
+    await session.commit()
+    await get_manager().refresh()
+    ordered = [status_map[mid] for mid in discovered]
+    result = ModelDiscoveryResult(
+        provider_id=provider.id,
+        provider_name=provider.name,
+        total=len(discovered),
+        imported=imported,
+        skipped=skipped,
+        ok_count=sum(1 for s in ordered if s.ok),
+        models=ordered,
+    )
+    yield {"event": "done", "result": result.model_dump()}
+
+
+__all__ = [
+    "parse_model_list",
+    "discover_provider_models",
+    "test_provider_model",
+    "discover_and_test",
+    "discover_and_test_stream",
+]

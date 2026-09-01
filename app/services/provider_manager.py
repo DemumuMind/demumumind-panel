@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import AsyncSessionLocal
 from app.models import ApiKey, Model, Provider, ProviderKey
-from app.schemas import CreateModelRequest, CreateProviderRequest, PaginatedResponse
+from app.schemas import CreateModelRequest, CreateProviderRequest, PaginatedResponse, UpdateProviderRequest
 
 logger = structlog.get_logger(__name__)
 
@@ -220,6 +220,24 @@ class ProviderManager:
             meta=json.dumps(data.metadata or {}),
         )
         session.add(provider)
+        await session.commit()
+        await session.refresh(provider)
+        await self.refresh()
+        return provider
+
+    async def update_provider(self, session: AsyncSession, provider: Provider, data: UpdateProviderRequest) -> Provider:
+        changes = data.model_dump(exclude_unset=True)
+        if changes.get("is_default"):
+            await session.execute(update(Provider).values(is_default=0))
+        if "metadata" in changes:
+            provider.meta = json.dumps(changes.pop("metadata") or {})
+        for key, value in changes.items():
+            if key == "is_default":
+                provider.is_default = 1 if value else 0
+            elif key == "is_active":
+                provider.is_active = 1 if value else 0
+            else:
+                setattr(provider, key, value)
         await session.commit()
         await session.refresh(provider)
         await self.refresh()

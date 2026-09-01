@@ -75,6 +75,63 @@ export async function discoverProvider(id: string, test = false) {
 	return postJSON<any>(`/v1/admin/providers/${id}/discover${test ? '?test=1' : ''}`, {});
 }
 
+export async function updateProvider(id: string, data: any) {
+	return request(`/v1/admin/providers/${id}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(data)
+	}).then(async (res) => {
+		if (!res.ok) {
+			const err = await res.json().catch(() => ({ error: res.statusText }));
+			throw new Error(err.error || res.statusText);
+		}
+		return res.json();
+	});
+}
+
+export async function discoverProviderStream(
+	id: string,
+	test: boolean,
+	onEvent: (event: any) => void
+): Promise<any> {
+	const key = get(panelKey);
+	const headers: Record<string, string> = {};
+	if (key) headers['Authorization'] = `Bearer ${key}`;
+	const res = await fetch(`${BASE}/v1/admin/providers/${id}/discover${test ? '?test=1' : ''}`, {
+		method: 'POST',
+		headers
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || res.statusText);
+	}
+	if (!res.body) throw new Error('no response stream');
+	const reader = res.body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = '';
+	let done: any = null;
+	while (true) {
+		const { done: finished, value } = await reader.read();
+		if (finished) break;
+		buffer += decoder.decode(value, { stream: true });
+		const lines = buffer.split('\n');
+		buffer = lines.pop() || '';
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed.startsWith('data:')) continue;
+			const data = trimmed.slice(5).trim();
+			try {
+				const event = JSON.parse(data);
+				if (event.event === 'done') done = event.result;
+				onEvent(event);
+			} catch {
+				// skip malformed lines
+			}
+		}
+	}
+	return done;
+}
+
 export async function testProviderModel(id: string, internalModel: string) {
 	return postJSON<any>(`/v1/admin/providers/${id}/models/${encodeURIComponent(internalModel)}/test`, {});
 }
