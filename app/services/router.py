@@ -19,8 +19,10 @@ class Router:
     async def resolve(self, user_model_id: str, key_hash: str | None = None) -> ResolvedModel | None:
         return self._manager.resolve(user_model_id, key_hash)
 
-    async def list_models_detailed(self, limit: int, offset: int) -> PaginatedResponse[dict[str, Any]]:
-        return await self._manager.list_available_models_detailed(limit, offset)
+    async def list_models_detailed(
+        self, limit: int, offset: int, provider_id: str | None = None
+    ) -> PaginatedResponse[dict[str, Any]]:
+        return await self._manager.list_available_models_detailed(limit, offset, provider_id)
 
     @property
     def manager(self) -> ProviderManager:

@@ -113,6 +113,37 @@ class FinopsService:
             for r in rows.all()
         ]
 
+    async def usage_by_provider(
+        self, session: AsyncSession, limit: int, offset: int
+    ) -> PaginatedResponse[AgentUsageOut]:
+        from app.models import Provider as ProviderModel
+
+        base = (
+            select(
+                func.coalesce(ProviderModel.name, "unknown").label("provider_name"),
+                func.sum(AgentUsage.tokens_in).label("tokens_in"),
+                func.sum(AgentUsage.tokens_out).label("tokens_out"),
+                func.sum(AgentUsage.cost_usd).label("cost_usd"),
+                func.count(AgentUsage.id).label("requests"),
+            )
+            .outerjoin(ProviderModel, ProviderModel.id == AgentUsage.provider_id)
+            .group_by(AgentUsage.provider_id)
+        )
+        total = await session.execute(select(func.count()).select_from(base.subquery()))
+        total_count = int(total.scalar_one() or 0)
+        rows = await session.execute(base.order_by(func.count(AgentUsage.id).desc()).limit(limit).offset(offset))
+        items = [
+            AgentUsageOut(
+                agent_type=r.provider_name,
+                tokens_in=int(r.tokens_in or 0),
+                tokens_out=int(r.tokens_out or 0),
+                cost_usd=float(r.cost_usd or 0.0),
+                requests=int(r.requests or 0),
+            )
+            for r in rows.all()
+        ]
+        return PaginatedResponse[AgentUsageOut](items=items, total=total_count, limit=limit, offset=offset)
+
 
 _finops: FinopsService | None = None
 

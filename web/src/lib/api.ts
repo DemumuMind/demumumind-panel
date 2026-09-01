@@ -170,8 +170,11 @@ export async function runCleanup() {
 	return postJSON<any>('/v1/admin/cleanup', {});
 }
 
-export async function fetchModels(limit = 100, offset = 0) {
-	return getJSON<{ items: any[]; total: number }>(`/v1/admin/models?limit=${limit}&offset=${offset}`);
+export async function fetchModels(limit = 100, offset = 0, providerId?: string) {
+	const q = providerId
+		? `/v1/admin/models?limit=${limit}&offset=${offset}&provider_id=${encodeURIComponent(providerId)}`
+		: `/v1/admin/models?limit=${limit}&offset=${offset}`;
+	return getJSON<{ items: any[]; total: number }>(q);
 }
 
 export async function createModel(data: any) {
@@ -260,6 +263,10 @@ export async function* streamChat(
 
 export async function fetchUsage(limit = 100, offset = 0) {
 	return getJSON<{ items: any[]; total: number }>(`/v1/usage?limit=${limit}&offset=${offset}`);
+}
+
+export async function fetchUsageByProvider(limit = 100, offset = 0) {
+	return getJSON<{ items: any[]; total: number }>(`/v1/usage/by-provider?limit=${limit}&offset=${offset}`);
 }
 
 export async function fetchUsageTimeseries(days = 30) {

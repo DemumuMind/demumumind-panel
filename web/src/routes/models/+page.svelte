@@ -15,13 +15,16 @@
 	let providerId = $state('');
 	let userModelId = $state('');
 	let internalModel = $state('');
+	let filterProvider = $state('');
+	let filterText = $state('');
 
 	async function load() {
 		try {
-			const [pr, mo] = await Promise.all([fetchProviders(100, 0), fetchModels(100, 0)]);
+			const pr = await fetchProviders(100, 0);
 			providers = pr.items;
-			models = mo.items;
 			if (!providerId && providers.length) providerId = providers[0].id;
+			const mo = await fetchModels(1000, 0, filterProvider || undefined);
+			models = mo.items;
 		} catch (e: any) {
 			showToast(e.message, 'error');
 		}
@@ -48,6 +51,13 @@
 			showToast(e.message, 'error');
 		}
 	}
+
+	let visibleModels = $derived(
+		models.filter((m) => {
+			if (filterText && !m.user_model_id.toLowerCase().includes(filterText.toLowerCase())) return false;
+			return true;
+		})
+	);
 </script>
 
 <div class="flex items-center gap-2 mb-6">
@@ -70,8 +80,23 @@
 </Card>
 
 <Card>
+	<div class="flex gap-2 mb-3 items-end">
+		<div class="flex-1">
+			<label class="text-xs text-(--text-muted) block mb-1">Filter by provider</label>
+			<Select bind:value={filterProvider} onchange={() => load()}>
+				<option value="">All providers</option>
+				{#each providers as p}
+					<option value={p.id}>{p.name}</option>
+				{/each}
+			</Select>
+		</div>
+		<div class="flex-1">
+			<label class="text-xs text-(--text-muted) block mb-1">Search model</label>
+			<Input placeholder="Search by name…" bind:value={filterText} />
+		</div>
+	</div>
 	<Table headers={['user_model_id', 'internal_model', 'Provider', 'Actions']}>
-		{#each models as m}
+		{#each visibleModels as m}
 			<tr class="border-b border-(--border)/50 hover:bg-(--bg-hover) transition-colors">
 				<td class="py-2 px-3 font-medium text-(--text)">{m.user_model_id}</td>
 				<td class="py-2 px-3 text-(--text-muted)">{m.internal_model}</td>
@@ -82,7 +107,7 @@
 			</tr>
 		{/each}
 	</Table>
-	{#if models.length === 0}
+	{#if visibleModels.length === 0}
 		<EmptyState title="No models mapped" description="Map a user model to a provider model.">
 			{#snippet icon()}<Boxes class="w-5 h-5" />{/snippet}
 		</EmptyState>
