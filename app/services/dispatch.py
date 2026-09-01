@@ -286,23 +286,50 @@ async def _record_db_usage(
     price_known: bool,
     cache_hit: bool,
 ) -> None:
-    try:
-        async with AsyncSessionLocal() as session:
-            await get_finops().record_usage(
-                session,
-                agent_type=agent_type,
-                provider_id=provider_id,
-                model_id=model_id,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                cost_usd=cost_usd,
-                is_free=is_free,
-                unlimited=unlimited,
-                price_known=price_known,
-                cache_hit=cache_hit,
-            )
-    except Exception:
-        logger.exception("dispatch.db_usage_error", agent_type=agent_type)
+    """Persist usage with retry on SQLite lock contention.
+
+    Concurrent writes (16+ harness workers) can transiently hit
+    'database is locked'; retry a few times with short backoff so usage
+    rows are not silently dropped.
+    """
+    import asyncio
+
+    from sqlalchemy.exc import OperationalError
+
+    attempt = 0
+    while True:
+        try:
+            async with AsyncSessionLocal() as session:
+                await get_finops().record_usage(
+                    session,
+                    agent_type=agent_type,
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    cost_usd=cost_usd,
+                    is_free=is_free,
+                    unlimited=unlimited,
+                    price_known=price_known,
+                    cache_hit=cache_hit,
+                )
+            return
+        except OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                logger.exception("dispatch.db_usage_error", agent_type=agent_type)
+                return
+            attempt += 1
+            if attempt > 3:
+                logger.warning(
+                    "dispatch.db_usage_retry_exhausted",
+                    agent_type=agent_type,
+                    attempts=attempt,
+                )
+                return
+            await asyncio.sleep(0.05 * attempt)
+        except Exception:
+            logger.exception("dispatch.db_usage_error", agent_type=agent_type)
+            return
 
 
 async def resolve_stream_cache(

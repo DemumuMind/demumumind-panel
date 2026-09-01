@@ -45,7 +45,7 @@ def _attach_sqlite_pragmas(engine: AsyncEngine) -> None:
     def _set_pragmas(dbapi_conn: Any, _record: Any) -> None:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
