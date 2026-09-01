@@ -332,13 +332,15 @@ class ProviderManager:
             await session.commit()
             await session.refresh(model)
             await self.refresh()
-            await self._reconcile_usage_by_model(session, model, pricing, mmeta.get("free", False))
+            await self._reconcile_usage_by_model(
+                session, model, pricing, mmeta.get("free", False), not mmeta.get("limits")
+            )
         return model
 
     async def _reconcile_usage_by_model(
-        self, session: AsyncSession, model: Model, pricing: dict[str, float], is_free: bool
+        self, session: AsyncSession, model: Model, pricing: dict[str, float], is_free: bool, unlimited: bool
     ) -> None:
-        """Recompute cost_usd/is_free/price_known for all usage rows of this model."""
+        """Recompute cost_usd/is_free/price_known/unlimited for all usage rows of this model."""
         p = pricing.get("prompt", 0.0) if pricing else 0.0
         c = pricing.get("completion", 0.0) if pricing else 0.0
         r = pricing.get("request", 0.0) if pricing else 0.0
@@ -350,6 +352,7 @@ class ProviderManager:
         )
         for row in rows.scalars().all():
             row.is_free = 1 if is_free else 0
+            row.unlimited = 1 if (is_free and unlimited) else 0
             if is_free:
                 row.cost_usd = 0.0
                 row.price_known = 1

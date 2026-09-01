@@ -294,7 +294,7 @@ async def test_manual_pricing_reconciles_existing_rows(client: AsyncClient, db_s
         price_known=False,
     )
 
-    # set free + pricing — free overrides cost to 0
+    # set free + pricing — free overrides cost to 0, unlimited (no limits)
     resp = await client.patch(
         f"/v1/admin/models/{model_id}/pricing",
         headers=ADMIN_HEADERS,
@@ -306,7 +306,20 @@ async def test_manual_pricing_reconciles_existing_rows(client: AsyncClient, db_s
     assert len(rows) == 1
     assert rows[0].price_known == 1
     assert rows[0].is_free == 1
+    assert rows[0].unlimited == 1
     assert rows[0].cost_usd == 0.0  # free → cost 0 regardless of pricing
+
+    # set free + limit → free but limited (not unlimited)
+    resp = await client.patch(
+        f"/v1/admin/models/{model_id}/pricing",
+        headers=ADMIN_HEADERS,
+        json={"free": True, "limit_requests_per_day": 200},
+    )
+    assert resp.status_code == 200
+    db_session.expire_all()
+    rows = (await db_session.execute(select(AgentUsage).where(AgentUsage.model_id == model_id))).scalars().all()
+    assert rows[0].is_free == 1
+    assert rows[0].unlimited == 0
 
     # set not free → compute from pricing
     resp = await client.patch(
