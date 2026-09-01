@@ -8,6 +8,7 @@ discovered model gets a real minimal request to confirm it works.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from collections.abc import AsyncIterator
@@ -31,30 +32,72 @@ logger = structlog.get_logger(__name__)
 
 def parse_model_list(provider: Provider, data: dict[str, Any]) -> list[str]:
     """Extract model ids from a provider's GET /models response by protocol."""
+    return [mid for mid, _meta in parse_model_items(provider, data)]
+
+
+def parse_model_items(provider: Provider, data: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Extract (model_id, metadata) from a provider's GET /models response.
+
+    metadata carries pricing/free/limits when the provider discloses them
+    (OpenRouter: `pricing.{prompt,completion,request}`, `per_request_limits`).
+    """
     proto = normalize_protocol(provider.protocol)
-    out: list[str] = []
+    raw: list[tuple[str, dict[str, Any]]] = []
     if proto == "gemini":
         for item in data.get("models") or []:
             if not isinstance(item, dict):
                 continue
             name = item.get("name")
             if isinstance(name, str) and name:
-                out.append(name.removeprefix("models/"))
+                raw.append((name.removeprefix("models/"), _model_meta_from_item(item)))
     else:
         for item in data.get("data") or []:
             if not isinstance(item, dict):
                 continue
             mid = item.get("id")
             if isinstance(mid, str) and mid:
-                out.append(mid)
+                raw.append((mid, _model_meta_from_item(item)))
     # dedupe, preserve order
     seen: set[str] = set()
-    result: list[str] = []
-    for m in out:
-        if m not in seen:
-            seen.add(m)
-            result.append(m)
+    result: list[tuple[str, dict[str, Any]]] = []
+    for mid, meta in raw:
+        if mid not in seen:
+            seen.add(mid)
+            result.append((mid, meta))
     return result
+
+
+def _model_meta_from_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Parse pricing/free/limits out of a /models item (OpenRouter-style)."""
+    meta: dict[str, Any] = {}
+    pricing_raw = item.get("pricing")
+    if isinstance(pricing_raw, dict):
+        pricing: dict[str, float] = {}
+        for key in ("prompt", "completion", "request"):
+            val = pricing_raw.get(key)
+            if isinstance(val, (int | float)) and not isinstance(val, bool):
+                pricing[key] = float(val)
+            elif isinstance(val, str):
+                with contextlib.suppress(ValueError):
+                    pricing[key] = float(val)
+        if pricing:
+            meta["pricing"] = pricing
+    mid = str(item.get("id") or "")
+    pricing = meta.get("pricing") or {}
+    free = mid.endswith(":free") or mid.endswith("-free") or (
+        pricing and all(pricing.get(k, 0.0) == 0.0 for k in ("prompt", "completion", "request"))
+    )
+    if free:
+        meta["free"] = True
+    limits_raw = item.get("per_request_limits")
+    if isinstance(limits_raw, dict):
+        limits: dict[str, Any] = {}
+        for key in ("prompt_tokens", "completion_tokens"):
+            if limits_raw.get(key) is not None:
+                limits[key] = limits_raw[key]
+        if limits:
+            meta["limits"] = limits
+    return meta
 
 
 async def discover_provider_models(provider: Provider, request_id: str) -> list[str]:
@@ -87,6 +130,43 @@ async def discover_provider_models(provider: Provider, request_id: str) -> list[
     data = resp.json()
     await resp.aclose()
     return parse_model_list(provider, data)
+
+
+async def discover_provider_models_with_meta(provider: Provider, request_id: str) -> list[tuple[str, dict[str, Any]]]:
+    """Like discover_provider_models but returns (id, metadata) pairs.
+
+    metadata carries pricing/free/limits from the provider's /models listing
+    (OpenRouter: `pricing`, `per_request_limits`, `:free` suffix).
+    """
+    pool = get_pool()
+    try:
+        resp = await pool.request(
+            provider=provider,
+            path="models",
+            method="GET",
+            json_body=None,
+            request_id=request_id,
+        )
+    except Exception as exc:
+        raise UpstreamError(
+            status_code=502,
+            message="Provider /models unreachable",
+            detail=type(exc).__name__,
+            request_id=request_id,
+        ) from exc
+    if resp.status_code >= 400:
+        body = resp.text[:2000]
+        decision = classify(resp.status_code, body)
+        await resp.aclose()
+        raise UpstreamError(
+            status_code=resp.status_code,
+            message=f"Provider /models failed ({decision.category})",
+            detail=body[:300],
+            request_id=request_id,
+        )
+    data = resp.json()
+    await resp.aclose()
+    return parse_model_items(provider, data)
 
 
 def _test_body(protocol: str, internal_model: str) -> tuple[str, dict[str, Any]]:
@@ -202,14 +282,47 @@ def _extract_error(body: str, status_code: int) -> str:
     return f"HTTP {status_code}"
 
 
+def _merge_provider_meta(existing_meta: dict[str, Any], discovered_meta: dict[str, Any]) -> bool:
+    """Merge provider-discovered pricing/free/limits into model meta.
+
+    Manual override (price_source == 'manual') is never overwritten.
+    Returns True if meta changed.
+    """
+    if not discovered_meta:
+        return False
+    if existing_meta.get("price_source") == "manual":
+        return False
+    changed = False
+    pricing = discovered_meta.get("pricing")
+    if isinstance(pricing, dict):
+        merged = dict(existing_meta.get("pricing") or {})
+        for key, val in pricing.items():
+            if merged.get(key) != val:
+                merged[key] = val
+                changed = True
+        existing_meta["pricing"] = merged
+    if "free" in discovered_meta and existing_meta.get("free") != discovered_meta["free"]:
+        existing_meta["free"] = discovered_meta["free"]
+        changed = True
+    limits = discovered_meta.get("limits")
+    if isinstance(limits, dict):
+        merged_limits = dict(existing_meta.get("limits") or {})
+        for key, val in limits.items():
+            if merged_limits.get(key) != val:
+                merged_limits[key] = val
+                changed = True
+        existing_meta["limits"] = merged_limits
+    return changed
+
+
 async def discover_and_test(
     provider: Provider, session: AsyncSession, request_id: str, test: bool = False
 ) -> ModelDiscoveryResult:
-    discovered = await discover_provider_models(provider, request_id)
+    discovered = await discover_provider_models_with_meta(provider, request_id)
     imported = 0
     skipped = 0
     model_ids: dict[str, Model] = {}
-    for mid in discovered:
+    for mid, dmeta in discovered:
         row = await session.execute(
             select(Model).where(
                 Model.provider_id == provider.id,
@@ -223,19 +336,23 @@ async def discover_and_test(
                 user_model_id=mid,
                 internal_model=mid,
                 is_active=1,
-                meta="{}",
+                meta=json.dumps(dmeta) if dmeta else "{}",
             )
             session.add(m)
             imported += 1
             model_ids[mid] = m
         else:
             skipped += 1
+            if dmeta:
+                mmeta = json.loads(existing.meta or "{}")
+                if _merge_provider_meta(mmeta, dmeta):
+                    existing.meta = json.dumps(mmeta)
             model_ids[mid] = existing
 
     if not test:
         # light discover: list + import only, no real requests (avoids provider 429 sweeps)
         statuses = [
-            DiscoveredModelStatus(internal_model=mid, ok=True, category="listed") for mid in discovered
+            DiscoveredModelStatus(internal_model=mid, ok=True, category="listed") for mid, _meta in discovered
         ]
         await session.commit()
         await get_manager().refresh()
@@ -265,10 +382,10 @@ async def discover_and_test(
             await asyncio.sleep(0.2)  # stagger
             return status
 
-    statuses = list(await asyncio.gather(*[_test(mid) for mid in discovered]))
+    statuses = list(await asyncio.gather(*[_test(mid) for mid, _ in discovered]))
 
     # update premium flag in meta after tests
-    for mid, status in zip(discovered, statuses, strict=False):
+    for (mid, _), status in zip(discovered, statuses, strict=False):
         if status.category == "premium":
             model_obj = model_ids.get(mid)
             if model_obj is not None:
@@ -343,13 +460,13 @@ async def discover_and_test_stream(
       {"event":"done","result":{...ModelDiscoveryResult...}}
     """
     yield {"event": "stage", "stage": "listing", "message": "Fetching models…"}
-    discovered = await discover_provider_models(provider, request_id)
+    discovered = await discover_provider_models_with_meta(provider, request_id)
     imported = 0
     skipped = 0
     model_ids: dict[str, Model] = {}
     total = len(discovered)
     yield {"event": "stage", "stage": "import", "total": total}
-    for mid in discovered:
+    for mid, dmeta in discovered:
         row = await session.execute(
             select(Model).where(
                 Model.provider_id == provider.id,
@@ -363,7 +480,7 @@ async def discover_and_test_stream(
                 user_model_id=mid,
                 internal_model=mid,
                 is_active=1,
-                meta="{}",
+                meta=json.dumps(dmeta) if dmeta else "{}",
             )
             session.add(m)
             imported += 1
@@ -371,12 +488,16 @@ async def discover_and_test_stream(
             yield {"event": "import", "current": imported + skipped, "total": total, "model": mid, "status": "imported"}
         else:
             skipped += 1
+            if dmeta:
+                mmeta = json.loads(existing.meta or "{}")
+                if _merge_provider_meta(mmeta, dmeta):
+                    existing.meta = json.dumps(mmeta)
             model_ids[mid] = existing
             yield {"event": "import", "current": imported + skipped, "total": total, "model": mid, "status": "skipped"}
 
     if not test:
         statuses = [
-            DiscoveredModelStatus(internal_model=mid, ok=True, category="listed") for mid in discovered
+            DiscoveredModelStatus(internal_model=mid, ok=True, category="listed") for mid, _ in discovered
         ]
         result = ModelDiscoveryResult(
             provider_id=provider.id,
@@ -403,7 +524,7 @@ async def discover_and_test_stream(
             await asyncio.sleep(0.2)  # stagger
             return mid, status
 
-    tasks = [asyncio.create_task(_test(mid)) for mid in discovered]
+    tasks = [asyncio.create_task(_test(mid)) for mid, _ in discovered]
     status_map: dict[str, DiscoveredModelStatus] = {}
     for done_count, coro in enumerate(asyncio.as_completed(tasks), 1):
         mid, status = await coro
@@ -426,7 +547,7 @@ async def discover_and_test_stream(
                     mmeta["premium"] = True
                     model_obj.meta = json.dumps(mmeta)
 
-    ordered = [status_map[mid] for mid in discovered]
+    ordered = [status_map[mid] for mid, _ in discovered]
     result = ModelDiscoveryResult(
         provider_id=provider.id,
         provider_name=provider.name,
@@ -444,7 +565,9 @@ async def discover_and_test_stream(
 
 __all__ = [
     "parse_model_list",
+    "parse_model_items",
     "discover_provider_models",
+    "discover_provider_models_with_meta",
     "test_provider_model",
     "discover_and_test",
     "discover_and_test_stream",

@@ -69,6 +69,60 @@ def _tokens_from(data: dict[str, Any], protocol: str) -> tuple[int, int]:
     return int(usage.get("prompt_tokens", 0)), int(usage.get("completion_tokens", 0))
 
 
+def _cost_from_usage(usage: dict[str, Any] | None) -> float | None:
+    """Real USD cost reported by the provider (OpenRouter `usage.cost`)."""
+    if not isinstance(usage, dict):
+        return None
+    cost = usage.get("cost")
+    if isinstance(cost, (int | float)) and not isinstance(cost, bool):
+        return float(cost)
+    details = usage.get("cost_details")
+    if isinstance(details, dict):
+        p = details.get("upstream_inference_prompt_cost")
+        c = details.get("upstream_inference_completions_cost")
+        if isinstance(p, (int | float)) and isinstance(c, (int | float)):
+            return float(p) + float(c)
+    return None
+
+
+def _compute_cost_from_pricing(
+    resolved: ResolvedModel | None, tokens_in: int, tokens_out: int
+) -> float | None:
+    """Estimate cost from per-token pricing stored in the model record."""
+    pricing = (resolved.pricing if resolved else None) or None
+    if not pricing:
+        return None
+    prompt = pricing.get("prompt", 0.0)
+    completion = pricing.get("completion", 0.0)
+    request = pricing.get("request", 0.0)
+    return tokens_in * prompt + tokens_out * completion + request
+
+
+def _resolve_cost(
+    resolved: ResolvedModel | None,
+    data_or_usage: dict[str, Any] | None,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+) -> tuple[float, bool]:
+    """Return (cost_usd, price_known) for a completed request.
+
+    Priority: provider-reported `usage.cost` -> computed from per-token
+    pricing in the model record -> unknown (0.0, price_known=False).
+    """
+    usage = data_or_usage.get("usage") if isinstance(data_or_usage, dict) else None
+    provider_cost = _cost_from_usage(usage)
+    if provider_cost is not None:
+        return provider_cost, True
+    computed = _compute_cost_from_pricing(resolved, tokens_in, tokens_out)
+    if computed is not None:
+        return computed, True
+    return 0.0, False
+
+
+def _is_free_model(resolved: ResolvedModel | None) -> bool:
+    return bool(resolved and resolved.is_free)
+
+
 def _to_provider(resolved: ResolvedModel, api_key: str | None = None) -> Provider:
     return Provider(
         id=resolved.provider_id,
@@ -160,9 +214,13 @@ async def chat_completion(
             await _record_db_usage(
                 agent_type=agent_type,
                 provider_id=resolved.provider_id,
+                model_id=resolved.model_id,
                 tokens_in=0,
                 tokens_out=0,
                 cost_usd=0.0,
+                is_free=_is_free_model(resolved),
+                price_known=bool(resolved and resolved.pricing),
+                cache_hit=True,
             )
             return cast(dict[str, Any], json.loads(cached))
 
@@ -178,27 +236,44 @@ async def chat_completion(
         await cache.set(model, prompt_text, temperature, tools, json.dumps(output, ensure_ascii=False), key_hash)
 
     tokens_in, tokens_out = _tokens_from(data, target)
-    record_usage(tokens_in, tokens_out, 0.0, provider_id=resolved.provider_id, agent_type=agent_type)
+    cost, price_known = _resolve_cost(resolved, data, tokens_in, tokens_out)
+    is_free = _is_free_model(resolved) or (cost <= 0.000001 and price_known)
+    record_usage(tokens_in, tokens_out, cost, provider_id=resolved.provider_id, agent_type=agent_type)
     record_latency(latency, provider_id=resolved.provider_id)
     await _record_db_usage(
         agent_type=agent_type,
         provider_id=resolved.provider_id,
+        model_id=resolved.model_id,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
-        cost_usd=0.0,
+        cost_usd=cost,
+        is_free=is_free,
+        price_known=price_known,
+        cache_hit=False,
     )
     logger.info(
         "dispatch.completed",
         model=model,
         provider=resolved.provider_name,
         latency_ms=round(latency * 1000, 1),
+        cost=round(cost, 8),
+        price_known=price_known,
         request_id=request_id,
     )
     return output
 
 
 async def _record_db_usage(
-    *, agent_type: str, provider_id: str | None, tokens_in: int, tokens_out: int, cost_usd: float
+    *,
+    agent_type: str,
+    provider_id: str | None,
+    model_id: str | None,
+    tokens_in: int,
+    tokens_out: int,
+    cost_usd: float,
+    is_free: bool,
+    price_known: bool,
+    cache_hit: bool,
 ) -> None:
     try:
         async with AsyncSessionLocal() as session:
@@ -206,9 +281,13 @@ async def _record_db_usage(
                 session,
                 agent_type=agent_type,
                 provider_id=provider_id,
+                model_id=model_id,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 cost_usd=cost_usd,
+                is_free=is_free,
+                price_known=price_known,
+                cache_hit=cache_hit,
             )
     except Exception:
         logger.exception("dispatch.db_usage_error", agent_type=agent_type)
@@ -261,18 +340,25 @@ async def _extract_stream_usage(sse_chunks: list[bytes]) -> dict[str, Any] | Non
 
 
 async def _record_stream_db_usage(
-    *, agent_type: str, provider_id: str | None, sse_chunks: list[bytes]
+    *, agent_type: str, provider_id: str | None, resolved: ResolvedModel | None, sse_chunks: list[bytes]
 ) -> None:
     usage = await _extract_stream_usage(sse_chunks) if sse_chunks else None
     tokens_in = int((usage or {}).get("prompt_tokens", 0) or 0)
     tokens_out = int((usage or {}).get("completion_tokens", 0) or 0)
-    record_usage(tokens_in, tokens_out, 0.0, provider_id=provider_id, agent_type=agent_type)
+    lookup: dict[str, Any] = {"usage": usage} if usage else {}
+    cost, price_known = _resolve_cost(resolved, lookup, tokens_in, tokens_out)
+    is_free = _is_free_model(resolved) or (cost <= 0.000001 and price_known)
+    record_usage(tokens_in, tokens_out, cost, provider_id=provider_id, agent_type=agent_type)
     await _record_db_usage(
         agent_type=agent_type,
         provider_id=provider_id,
+        model_id=resolved.model_id if resolved else None,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
-        cost_usd=0.0,
+        cost_usd=cost,
+        is_free=is_free,
+        price_known=price_known,
+        cache_hit=False,
     )
 
 
@@ -302,9 +388,13 @@ async def chat_completion_stream(
             await _record_db_usage(
                 agent_type=agent_type,
                 provider_id=resolved.provider_id,
+                model_id=resolved.model_id,
                 tokens_in=0,
                 tokens_out=0,
                 cost_usd=0.0,
+                is_free=_is_free_model(resolved),
+                price_known=bool(resolved and resolved.pricing),
+                cache_hit=True,
             )
             yield cached_sse.encode("utf-8")
             return
@@ -348,6 +438,7 @@ async def chat_completion_stream(
         await _record_stream_db_usage(
             agent_type=agent_type,
             provider_id=resolved.provider_id,
+            resolved=resolved,
             sse_chunks=sse_chunks,
         )
         logger.info("dispatch.stream_done", model=model, request_id=request_id)

@@ -71,6 +71,23 @@ class ModelRecord:
             metadata=meta if isinstance(meta, dict) else {},
         )
 
+    @property
+    def pricing(self) -> dict[str, float] | None:
+        """Per-token pricing from model metadata: {prompt, completion, request}."""
+        raw = (self.metadata or {}).get("pricing")
+        if not isinstance(raw, dict):
+            return None
+        out: dict[str, float] = {}
+        for key in ("prompt", "completion", "request"):
+            val = raw.get(key)
+            if isinstance(val, (int | float)) and not isinstance(val, bool):
+                out[key] = float(val)
+        return out or None
+
+    @property
+    def is_free(self) -> bool:
+        return bool((self.metadata or {}).get("free"))
+
 
 @dataclass
 class ResolvedModel:
@@ -81,6 +98,9 @@ class ResolvedModel:
     base_url: str
     protocol: str
     api_key: str | None
+    model_id: str | None = None
+    pricing: dict[str, float] | None = None
+    is_free: bool = False
 
 
 class ProviderManager:
@@ -180,6 +200,9 @@ class ProviderManager:
             base_url=provider.base_url,
             protocol=provider.protocol,
             api_key=provider.api_key,
+            model_id=record.id,
+            pricing=record.pricing,
+            is_free=record.is_free,
         )
 
     async def list_available_models_detailed(
@@ -264,6 +287,44 @@ class ProviderManager:
         await session.commit()
         await session.refresh(model)
         await self.refresh()
+        return model
+
+    async def update_model_pricing(self, session: AsyncSession, model: Model, data: dict[str, Any]) -> Model:
+        """Merge pricing/free/limits into model.meta with source='manual'."""
+        mmeta = json.loads(model.meta or "{}")
+        pricing = mmeta.get("pricing", {}) or {}
+        if not isinstance(pricing, dict):
+            pricing = {}
+        changed = False
+        if "price_prompt_per_token" in data:
+            pricing["prompt"] = data["price_prompt_per_token"]
+            changed = True
+        if "price_completion_per_token" in data:
+            pricing["completion"] = data["price_completion_per_token"]
+            changed = True
+        if "price_request" in data:
+            pricing["request"] = data["price_request"]
+            changed = True
+        if "free" in data:
+            mmeta["free"] = bool(data["free"])
+            changed = True
+        if "limit_requests_per_minute" in data and data["limit_requests_per_minute"] is not None:
+            limits = mmeta.get("limits", {}) or {}
+            limits["requests_per_minute"] = data["limit_requests_per_minute"]
+            mmeta["limits"] = limits
+            changed = True
+        if "limit_requests_per_day" in data and data["limit_requests_per_day"] is not None:
+            limits = mmeta.get("limits", {}) or {}
+            limits["requests_per_day"] = data["limit_requests_per_day"]
+            mmeta["limits"] = limits
+            changed = True
+        if changed:
+            mmeta["pricing"] = pricing
+            mmeta["price_source"] = "manual"
+            model.meta = json.dumps(mmeta)
+            await session.commit()
+            await session.refresh(model)
+            await self.refresh()
         return model
 
 
