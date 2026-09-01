@@ -323,31 +323,53 @@ async def discover_and_test(
     skipped = 0
     model_ids: dict[str, Model] = {}
     for mid, dmeta in discovered:
-        row = await session.execute(
-            select(Model).where(
-                Model.provider_id == provider.id,
-                Model.user_model_id == mid,
-            ).limit(1)
-        )
-        existing = row.scalar_one_or_none()
-        if existing is None:
-            m = Model(
-                provider_id=provider.id,
-                user_model_id=mid,
-                internal_model=mid,
-                is_active=1,
-                meta=json.dumps(dmeta) if dmeta else "{}",
+        # Use no_autoflush: pending inserts must not flush on the next SELECT,
+        # otherwise a global UNIQUE(user_model_id) violation from another
+        # provider (e.g. gpt-4o via OpenRouter already exists) aborts the whole
+        # discover with "Query-invoked autoflush" IntegrityError.
+        with session.no_autoflush:
+            row = await session.execute(
+                select(Model).where(
+                    Model.provider_id == provider.id,
+                    Model.user_model_id == mid,
+                ).limit(1)
             )
-            session.add(m)
-            imported += 1
-            model_ids[mid] = m
-        else:
+            existing = row.scalar_one_or_none()
+            if existing is not None:
+                skipped += 1
+                if dmeta:
+                    mmeta = json.loads(existing.meta or "{}")
+                    if _merge_provider_meta(mmeta, dmeta):
+                        existing.meta = json.dumps(mmeta)
+                model_ids[mid] = existing
+                continue
+            # Global check: user_model_id is UNIQUE for routing (resolve by alias).
+            # If another provider already owns this alias, skip gracefully instead
+            # of hitting IntegrityError on autoflush/commit.
+            global_row = await session.execute(
+                select(Model).where(Model.user_model_id == mid).limit(1)
+            )
+            if global_row.scalar_one_or_none() is not None:
+                skipped += 1
+                logger.info("discovery.skipped_global_alias", provider=provider.name, model=mid)
+                continue
+        m = Model(
+            provider_id=provider.id,
+            user_model_id=mid,
+            internal_model=mid,
+            is_active=1,
+            meta=json.dumps(dmeta) if dmeta else "{}",
+        )
+        try:
+            async with session.begin_nested():
+                session.add(m)
+                await session.flush()
+        except Exception as exc:
             skipped += 1
-            if dmeta:
-                mmeta = json.loads(existing.meta or "{}")
-                if _merge_provider_meta(mmeta, dmeta):
-                    existing.meta = json.dumps(mmeta)
-            model_ids[mid] = existing
+            logger.info("discovery.skipped_integrity", provider=provider.name, model=mid, error=str(exc)[:120])
+            continue
+        imported += 1
+        model_ids[mid] = m
 
     if not test:
         # light discover: list + import only, no real requests (avoids provider 429 sweeps)
@@ -467,33 +489,62 @@ async def discover_and_test_stream(
     total = len(discovered)
     yield {"event": "stage", "stage": "import", "total": total}
     for mid, dmeta in discovered:
-        row = await session.execute(
-            select(Model).where(
-                Model.provider_id == provider.id,
-                Model.user_model_id == mid,
-            ).limit(1)
-        )
-        existing = row.scalar_one_or_none()
-        if existing is None:
-            m = Model(
-                provider_id=provider.id,
-                user_model_id=mid,
-                internal_model=mid,
-                is_active=1,
-                meta=json.dumps(dmeta) if dmeta else "{}",
+        with session.no_autoflush:
+            row = await session.execute(
+                select(Model).where(
+                    Model.provider_id == provider.id,
+                    Model.user_model_id == mid,
+                ).limit(1)
             )
-            session.add(m)
-            imported += 1
-            model_ids[mid] = m
-            yield {"event": "import", "current": imported + skipped, "total": total, "model": mid, "status": "imported"}
-        else:
+            existing = row.scalar_one_or_none()
+            if existing is not None:
+                skipped += 1
+                if dmeta:
+                    mmeta = json.loads(existing.meta or "{}")
+                    if _merge_provider_meta(mmeta, dmeta):
+                        existing.meta = json.dumps(mmeta)
+                model_ids[mid] = existing
+                yield {
+                    "event": "import",
+                    "current": imported + skipped,
+                    "total": total,
+                    "model": mid,
+                    "status": "skipped",
+                }
+                continue
+            global_row = await session.execute(
+                select(Model).where(Model.user_model_id == mid).limit(1)
+            )
+            if global_row.scalar_one_or_none() is not None:
+                skipped += 1
+                logger.info("discovery.skipped_global_alias_stream", provider=provider.name, model=mid)
+                yield {
+                    "event": "import",
+                    "current": imported + skipped,
+                    "total": total,
+                    "model": mid,
+                    "status": "skipped",
+                }
+                continue
+        m = Model(
+            provider_id=provider.id,
+            user_model_id=mid,
+            internal_model=mid,
+            is_active=1,
+            meta=json.dumps(dmeta) if dmeta else "{}",
+        )
+        try:
+            async with session.begin_nested():
+                session.add(m)
+                await session.flush()
+        except Exception as exc:
             skipped += 1
-            if dmeta:
-                mmeta = json.loads(existing.meta or "{}")
-                if _merge_provider_meta(mmeta, dmeta):
-                    existing.meta = json.dumps(mmeta)
-            model_ids[mid] = existing
+            logger.info("discovery.skipped_integrity_stream", provider=provider.name, model=mid, error=str(exc)[:120])
             yield {"event": "import", "current": imported + skipped, "total": total, "model": mid, "status": "skipped"}
+            continue
+        imported += 1
+        model_ids[mid] = m
+        yield {"event": "import", "current": imported + skipped, "total": total, "model": mid, "status": "imported"}
 
     if not test:
         statuses = [
