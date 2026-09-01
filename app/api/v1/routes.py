@@ -6,6 +6,7 @@ endpoint. Auth: client keys (hmac) for /v1/*, panel key for admin.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
 import structlog
@@ -27,7 +28,7 @@ from app.schemas import (
     PaginatedResponse,
 )
 from app.services.agent_id import get_registry
-from app.services.dispatch import chat_completion, chat_completion_stream
+from app.services.dispatch import CacheMarker, chat_completion, chat_completion_stream, resolve_stream_cache
 from app.services.finops import get_finops
 from app.services.router import get_router
 from app.services.telemetry import generate_metrics
@@ -97,6 +98,12 @@ async def chat_completions(
     agent_type = get_agent_type(request)
     payload = body.model_dump(exclude_none=False)
     if body.stream:
+        is_cached, cached_sse = await resolve_stream_cache(body.model, key_hash, payload)
+        headers = {"X-DM-Cache": "hit"} if is_cached else None
+        if is_cached and cached_sse is not None:
+            async def _cached_stream() -> AsyncIterator[bytes]:
+                yield cached_sse.encode("utf-8")
+            return StreamingResponse(_cached_stream(), media_type="text/event-stream", headers=headers)
         stream = chat_completion_stream(
             request_id=request_id,
             key_hash=key_hash,
@@ -105,7 +112,8 @@ async def chat_completions(
             model=body.model,
             body=payload,
         )
-        return StreamingResponse(stream, media_type="text/event-stream")
+        return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
+    marker = CacheMarker()
     result = await chat_completion(
         request_id=request_id,
         key_hash=key_hash,
@@ -113,8 +121,10 @@ async def chat_completions(
         protocol="openai",
         model=body.model,
         body=payload,
+        marker=marker,
     )
-    return JSONResponse(result)
+    resp_headers = {"X-DM-Cache": "hit"} if marker.hit else None
+    return JSONResponse(result, headers=resp_headers)
 
 
 @v1_router.post("/messages")

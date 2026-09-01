@@ -12,7 +12,7 @@
 	let models = $state<any[]>([]);
 	let selectedModel = $state('');
 	let modelFilter = $state('');
-	let history = $state<{ role: string; content: string; reasoning?: string; usage?: ChatUsage }[]>([]);
+	let history = $state<{ role: string; content: string; reasoning?: string; usage?: ChatUsage; cached?: boolean }[]>([]);
 	let draft = $state('');
 	let busy = $state(false);
 	let temperature = $state('0.7');
@@ -68,6 +68,7 @@
 				if (chunk.content) history[idx].content += chunk.content;
 				if (chunk.reasoning) history[idx].reasoning = (history[idx].reasoning || '') + chunk.reasoning;
 				if (chunk.usage) history[idx].usage = chunk.usage;
+				if (chunk.cached) history[idx].cached = true;
 			}
 		} catch (e: any) {
 			history[idx].content = `Error: ${e.message}`;
@@ -172,6 +173,9 @@
 				</div>
 			{:else}
 				<div class="self-start max-w-[85%] rounded-xl bg-zinc-800 px-3 py-2 text-sm text-zinc-100">
+					{#if msg.cached}
+						<div class="mb-1 text-xs text-green-400">⚡ cached (panel)</div>
+					{/if}
 					{#if msg.reasoning}
 						<details class="mb-1">
 							<summary class="cursor-pointer text-xs text-zinc-500 select-none">Мысли</summary>

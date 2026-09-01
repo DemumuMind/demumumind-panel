@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any, cast
 
 import structlog
@@ -26,6 +27,11 @@ from app.services.telemetry import record_latency, record_usage
 from app.services.translate import normalize_protocol, translate_request, translate_response
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass
+class CacheMarker:
+    hit: bool = False
 
 
 def _provider_path(protocol: str, model: str) -> str:
@@ -121,6 +127,7 @@ async def chat_completion(
     protocol: str,
     model: str,
     body: dict[str, Any],
+    marker: CacheMarker | None = None,
 ) -> dict[str, Any]:
     manager = get_manager()
     resolved = manager.resolve(model, key_hash)
@@ -139,6 +146,8 @@ async def chat_completion(
         cached = await cache.get(model, prompt_text, temperature, tools, key_hash)
         if cached is not None:
             logger.info("dispatch.cache_hit", model=model, request_id=request_id)
+            if marker is not None:
+                marker.hit = True
             return cast(dict[str, Any], json.loads(cached))
 
     target = normalize_protocol(resolved.protocol)
@@ -163,6 +172,32 @@ async def chat_completion(
         request_id=request_id,
     )
     return output
+
+
+async def resolve_stream_cache(
+    model: str, key_hash: str, body: dict[str, Any]
+) -> tuple[bool, str | None]:
+    """Check whether this streaming request can be served from cache.
+
+    Returns (hit, sse_text). Resolves the model and computes the prompt the
+    same way chat_completion_stream does, so the route can set the
+    X-DM-Cache header before constructing the StreamingResponse.
+    """
+    manager = get_manager()
+    resolved = manager.resolve(model, key_hash)
+    if resolved is None:
+        return False, None
+    prompt_text = _extract_prompt(body.get("messages") or [])
+    temperature = body.get("temperature")
+    if temperature not in (None, 0, 0.0):
+        return False, None
+    cache = get_cache()
+    tools = body.get("tools")
+    cached_sse = await cache.get_stream(model, prompt_text, temperature, tools, key_hash)
+    if cached_sse is not None:
+        logger.info("dispatch.stream_cache_hit", model=model)
+        return True, cached_sse
+    return False, None
 
 
 async def chat_completion_stream(
@@ -231,4 +266,9 @@ async def chat_completion_stream(
         logger.info("dispatch.stream_done", model=model, request_id=request_id)
 
 
-__all__ = ["chat_completion", "chat_completion_stream"]
+__all__ = [
+    "chat_completion",
+    "chat_completion_stream",
+    "resolve_stream_cache",
+    "CacheMarker",
+]

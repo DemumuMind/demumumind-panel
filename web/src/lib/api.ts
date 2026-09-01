@@ -137,7 +137,7 @@ export interface ChatUsage {
 
 export async function* streamChat(
 	body: any
-): AsyncGenerator<{ content?: string; reasoning?: string; usage?: ChatUsage }> {
+): AsyncGenerator<{ content?: string; reasoning?: string; usage?: ChatUsage; cached?: boolean }> {
 	const key = get(panelKey);
 	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 	if (key) headers['Authorization'] = `Bearer ${key}`;
@@ -150,6 +150,8 @@ export async function* streamChat(
 		const err = await res.json().catch(() => ({ error: res.statusText }));
 		throw new Error(err.error || res.statusText);
 	}
+	const cached = res.headers.get('x-dm-cache') === 'hit';
+	if (cached) yield { cached: true };
 	if (!res.body) throw new Error('no response stream');
 	const reader = res.body.getReader();
 	const decoder = new TextDecoder();
