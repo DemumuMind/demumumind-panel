@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -89,6 +90,7 @@ class ProviderManager:
         self._key_mappings: dict[str, dict[str, str]] = {}
         self._provider_keys: dict[str, list[str]] = {}
         self._rr_counter: dict[str, int] = {}
+        self._key_cooldown: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
     async def load(self, session: AsyncSession) -> None:
@@ -123,17 +125,42 @@ class ProviderManager:
         return self._providers.get(provider_id)
 
     def active_keys(self, provider_id: str) -> list[str]:
-        return self._provider_keys.get(provider_id, [])
+        """All active keys for a provider: primary first, then pool keys."""
+        pool = self._provider_keys.get(provider_id, [])
+        provider = self._provider(provider_id)
+        if provider and provider.api_key:
+            return [provider.api_key, *pool]
+        return pool
 
     def pick_key(self, provider_id: str, offset: int = 0) -> str | None:
-        """Round-robin key selection. offset is used for retry (next key)."""
+        """Round-robin key selection with rate-limit cooldown.
+
+        Skips keys currently cooling down from a recent 429, so the pool
+        spreads load across keys and avoids hammering a rate-limited one.
+        offset is used for retry (next key).
+        """
         keys = self.active_keys(provider_id)
         if not keys:
             provider = self._provider(provider_id)
             return provider.api_key if provider else None
-        idx = (self._rr_counter.get(provider_id, 0) + offset) % len(keys)
-        self._rr_counter[provider_id] = (idx + 1) % len(keys)
+        n = len(keys)
+        now = time.monotonic()
+        start = (self._rr_counter.get(provider_id, 0) + offset) % n
+        for k in range(n):
+            idx = (start + k) % n
+            key = keys[idx]
+            if self._key_cooldown.get(key, 0.0) <= now:
+                self._rr_counter[provider_id] = (idx + 1) % n
+                return key
+        # all keys cooling down — fall back to plain round-robin
+        idx = (self._rr_counter.get(provider_id, 0) + offset) % n
+        self._rr_counter[provider_id] = (idx + 1) % n
         return keys[idx]
+
+    def mark_key_rate_limited(self, provider_id: str, api_key: str, cooldown_seconds: float = 5.0) -> None:
+        """Temporarily deprioritize a key after a rate-limit (429) response."""
+        self._key_cooldown[api_key] = time.monotonic() + cooldown_seconds
+        logger.info("provider_manager.key_cooldown", provider=provider_id, cooldown_s=cooldown_seconds)
 
     def resolve(self, user_model_id: str, key_hash: str | None = None) -> ResolvedModel | None:
         target = user_model_id

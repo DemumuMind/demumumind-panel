@@ -105,11 +105,18 @@ async def _do_request(
         body_text = resp.text[:2000]
         decision = classify(resp.status_code, body_text)
         await resp.aclose()
-        if attempt == 0 and decision.rotate_key:
+        if decision.rotate_key or resp.status_code == 429:
             keys = manager.active_keys(resolved.provider_id)
-            if len(keys) > 1:
-                logger.info("dispatch.retry_rotate_key", provider=resolved.provider_name, attempt=1)
-                return await _do_request(resolved, protocol, target, body, request_id, attempt=1)
+            if len(keys) > 1 and attempt < len(keys) - 1:
+                if resp.status_code == 429 and key:
+                    manager.mark_key_rate_limited(resolved.provider_id, key, 5.0)
+                logger.info(
+                    "dispatch.retry_next_key",
+                    provider=resolved.provider_name,
+                    attempt=attempt + 1,
+                    category=decision.category,
+                )
+                return await _do_request(resolved, protocol, target, body, request_id, attempt=attempt + 1)
         raise UpstreamError(
             status_code=resp.status_code,
             message=f"Upstream error ({decision.category})",
