@@ -16,10 +16,12 @@ from typing import Any, cast
 
 import structlog
 
+from app.core.db import AsyncSessionLocal
 from app.core.errors import NotFoundError, UpstreamError
 from app.models import Provider
 from app.services.cache import get_cache
 from app.services.failover import classify
+from app.services.finops import get_finops
 from app.services.guardrails import get_guardrail
 from app.services.pool import get_pool
 from app.services.provider_manager import ResolvedModel, get_manager
@@ -164,6 +166,13 @@ async def chat_completion(
     tokens_in, tokens_out = _tokens_from(data, target)
     record_usage(tokens_in, tokens_out, 0.0, provider_id=resolved.provider_id, agent_type=agent_type)
     record_latency(latency, provider_id=resolved.provider_id)
+    await _record_db_usage(
+        agent_type=agent_type,
+        provider_id=resolved.provider_id,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cost_usd=0.0,
+    )
     logger.info(
         "dispatch.completed",
         model=model,
@@ -172,6 +181,23 @@ async def chat_completion(
         request_id=request_id,
     )
     return output
+
+
+async def _record_db_usage(
+    *, agent_type: str, provider_id: str | None, tokens_in: int, tokens_out: int, cost_usd: float
+) -> None:
+    try:
+        async with AsyncSessionLocal() as session:
+            await get_finops().record_usage(
+                session,
+                agent_type=agent_type,
+                provider_id=provider_id,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_usd=cost_usd,
+            )
+    except Exception:
+        logger.exception("dispatch.db_usage_error", agent_type=agent_type)
 
 
 async def resolve_stream_cache(
@@ -263,6 +289,13 @@ async def chat_completion_stream(
             logger.info("dispatch.stream_cached", model=model, request_id=request_id)
         record_latency(time.monotonic() - start, provider_id=resolved.provider_id)
         record_usage(0, 0, 0.0, provider_id=resolved.provider_id, agent_type=agent_type)
+        await _record_db_usage(
+            agent_type=agent_type,
+            provider_id=resolved.provider_id,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+        )
         logger.info("dispatch.stream_done", model=model, request_id=request_id)
 
 
