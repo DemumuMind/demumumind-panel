@@ -1,6 +1,6 @@
 [project]
 name = "demumumind-panel"
-version = "0.1.0"
+version = "0.2.0"
 description = "Enterprise AI Gateway — aggregates any OpenAI/Anthropic/Gemini-compatible providers into one API + admin panel"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

@@ -31,6 +31,7 @@ from app.services.cleanup import run_cleanup
 from app.services.hot_reload import get_hot_reload
 from app.services.pool import get_pool
 from app.services.provider_manager import get_manager
+from app.version import VERSION
 
 logger = structlog.get_logger(__name__)
 
@@ -71,7 +72,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="DemumuMind Panel",
-    version="0.1.0",
+    version=VERSION,
     lifespan=lifespan,
 )
 

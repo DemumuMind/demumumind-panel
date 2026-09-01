@@ -32,6 +32,7 @@ from app.services.dispatch import CacheMarker, chat_completion, chat_completion_
 from app.services.finops import get_finops
 from app.services.router import get_router
 from app.services.telemetry import generate_metrics
+from app.version import VERSION
 
 logger = structlog.get_logger(__name__)
 
@@ -80,7 +81,7 @@ async def health() -> HealthOut:
             checks["redis"] = "ok"
         except Exception:
             checks["redis"] = "fallback"
-    return HealthOut(status="ok", version="0.1.0", checks=checks)
+    return HealthOut(status="ok", version=VERSION, checks=checks)
 
 
 @root_router.get("/metrics")
