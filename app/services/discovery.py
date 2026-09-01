@@ -502,20 +502,6 @@ async def discover_and_test_stream(
                     "status": "skipped",
                 }
                 continue
-            global_row = await session.execute(
-                select(Model).where(Model.user_model_id == mid).limit(1)
-            )
-            if global_row.scalar_one_or_none() is not None:
-                skipped += 1
-                logger.info("discovery.skipped_global_alias_stream", provider=provider.name, model=mid)
-                yield {
-                    "event": "import",
-                    "current": imported + skipped,
-                    "total": total,
-                    "model": mid,
-                    "status": "skipped",
-                }
-                continue
         m = Model(
             provider_id=provider.id,
             user_model_id=mid,
