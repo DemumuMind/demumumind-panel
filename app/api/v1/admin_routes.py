@@ -461,8 +461,11 @@ async def invoke_plugin(
     if not loaded:
         await runtime.load(plugin_name, plugin.wasm, plugin.signature)
     result = await runtime.invoke(plugin_name, body.fn, body.args)
-    if isinstance(result, dict) and result.get("ok") is False:
-        return PluginInvokeResult(ok=False, error=result.get("error"))
+    if isinstance(result, dict):
+        if result.get("ok") is False:
+            return PluginInvokeResult(ok=False, error=result.get("error"))
+        inner = result.get("result")
+        return PluginInvokeResult(ok=True, result=inner)
     return PluginInvokeResult(ok=True, result=result)
 
 

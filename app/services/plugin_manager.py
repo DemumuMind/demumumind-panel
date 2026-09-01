@@ -121,19 +121,19 @@ class WasmtimeRuntime(NoopRuntime):
         if entry is None:
             return {"ok": False, "error": f"plugin not loaded: {name}"}
         store, instance, module = entry
-        if not instance.get_export(store, fn):
+        exports = instance.exports(store)
+        func = exports.get(fn)
+        if func is None:
             return {"ok": False, "error": f"export not found: {fn}"}
         try:
-            exported = instance.get_export(store, fn)
-            callable_fn = exported
             if args is None:
-                result = callable_fn(store)
+                result = func(store)
             elif isinstance(args, list):
-                result = callable_fn(store, *args)
+                result = func(store, *args)
             elif isinstance(args, dict):
-                result = callable_fn(store, **args)
+                result = func(store, **args)
             else:
-                result = callable_fn(store, args)
+                result = func(store, args)
             return {"ok": True, "result": result}
         except Exception as exc:
             logger.warning("plugin.invoke_error", name=name, fn=fn, error=str(exc))
