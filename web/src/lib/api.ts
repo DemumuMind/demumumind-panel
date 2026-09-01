@@ -205,3 +205,31 @@ export async function uploadPlugin(name: string, signature: string, file: File) 
 	}
 	return res.json();
 }
+
+export async function invokePlugin(name: string, fn: string, args: any) {
+	return postJSON(`/v1/admin/plugins/${encodeURIComponent(name)}/invoke`, { fn, args });
+}
+
+export async function fetchMcpServers(limit = 100, offset = 0) {
+	return getJSON<{ items: any[]; total: number }>(`/v1/admin/mcp/servers?limit=${limit}&offset=${offset}`);
+}
+
+export async function createMcpServer(data: any) {
+	return postJSON('/v1/admin/mcp/servers', data);
+}
+
+export async function deleteMcpServer(id: string) {
+	return del(`/v1/admin/mcp/servers/${id}`);
+}
+
+export async function fetchMcpPermissions(limit = 100, offset = 0) {
+	return getJSON<{ items: any[]; total: number }>(`/v1/admin/mcp/permissions?limit=${limit}&offset=${offset}`);
+}
+
+export async function createMcpPermission(data: any) {
+	return postJSON('/v1/admin/mcp/permissions', data);
+}
+
+export async function deleteMcpPermission(id: string) {
+	return del(`/v1/admin/mcp/permissions/${id}`);
+}

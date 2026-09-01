@@ -322,6 +322,33 @@ class PluginOut(BaseModel):
     error: str | None = None
 
 
+class PluginInvokeRequest(BaseModel):
+    fn: str = Field(min_length=1)
+    args: Any = None
+
+
+class PluginInvokeResult(BaseModel):
+    ok: bool
+    result: Any = None
+    error: str | None = None
+
+
+# --- MCP ---
+
+
+class CreateMcpServerRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    base_url: str = Field(min_length=1, max_length=500)
+    description: str = ""
+
+
+class CreateMcpPermissionRequest(BaseModel):
+    agent_type: str = Field(min_length=1, max_length=100)
+    tool_name: str = Field(min_length=1, max_length=200)
+    allowed: bool = True
+    budget_per_day: float = 0.0
+
+
 class McpServerOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -372,6 +399,10 @@ __all__ = [
     "AgentUsageOut",
     "UsageRowOut",
     "PluginOut",
+    "PluginInvokeRequest",
+    "PluginInvokeResult",
+    "CreateMcpServerRequest",
+    "CreateMcpPermissionRequest",
     "McpServerOut",
     "McpPermissionOut",
 ]

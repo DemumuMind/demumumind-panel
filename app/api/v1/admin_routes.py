@@ -21,20 +21,26 @@ from app.api.v1.middleware import AuthState, hash_key
 from app.config import settings
 from app.core.db import get_db
 from app.core.errors import AppError, NotFoundError
-from app.models import ApiKey, Model, Provider, ProviderKey
+from app.models import ApiKey, McpPermission, McpServer, Model, Plugin, Provider, ProviderKey
 from app.schemas import (
     ApiKeyCreated,
     ApiKeyOut,
     CleanupReport,
     CreateApiKeyRequest,
+    CreateMcpPermissionRequest,
+    CreateMcpServerRequest,
     CreateModelRequest,
     CreateProviderKeyRequest,
     CreateProviderRequest,
     DiscoveredModelStatus,
     LoginRequest,
+    McpPermissionOut,
+    McpServerOut,
     ModelDiscoveryResult,
     ModelOut,
     PaginatedResponse,
+    PluginInvokeRequest,
+    PluginInvokeResult,
     PluginOut,
     ProviderKeyOut,
     ProviderOut,
@@ -43,7 +49,7 @@ from app.schemas import (
 from app.seed import run_seed
 from app.services.cleanup import run_cleanup
 from app.services.discovery import discover_and_test, test_provider_model
-from app.services.plugin_manager import get_plugin_manager
+from app.services.plugin_manager import get_plugin_manager, verify_ed25519
 from app.services.pool import get_pool
 from app.services.provider_manager import get_manager
 
@@ -387,18 +393,32 @@ async def delete_key(
 async def upload_plugin(
     request: Request,
     _: PanelDep,
+    session: SessionDep,
     payload: bytes = File(...),
     x_plugin_name: str | None = Header(default=None),
     x_plugin_signature: str | None = Header(default=None),
 ) -> PluginOut:
     if not x_plugin_name:
         raise AppError(422, "validation_error", "X-Plugin-Name header required")
+    signature = x_plugin_signature or ""
+    valid = verify_ed25519(payload, signature)
     runtime = get_plugin_manager()
-    ok = await runtime.load(x_plugin_name, payload, x_plugin_signature or "")
+    ok = await runtime.load(x_plugin_name, payload, signature)
     info = next((p for p in runtime.list() if p.name == x_plugin_name), None)
+    # persist to DB (SSOT): upsert by name
+    row = await session.execute(select(Plugin).where(Plugin.name == x_plugin_name).limit(1))
+    plugin = row.scalar_one_or_none()
+    if plugin is None:
+        plugin = Plugin(name=x_plugin_name, wasm=payload, signature=signature, signature_valid=1 if valid else 0)
+        session.add(plugin)
+    else:
+        plugin.wasm = payload
+        plugin.signature = signature
+        plugin.signature_valid = 1 if valid else 0
+    await session.commit()
     return PluginOut(
         name=x_plugin_name,
-        signature_valid=info.signature_valid if info else False,
+        signature_valid=valid,
         size_bytes=len(payload),
         loaded=ok,
         error=info.error if info else None,
@@ -406,18 +426,142 @@ async def upload_plugin(
 
 
 @admin_router.get("/plugins")
-async def list_plugins(_: PanelDep) -> list[PluginOut]:
+async def list_plugins(_: PanelDep, session: SessionDep) -> list[PluginOut]:
+    rows = await session.execute(select(Plugin).order_by(Plugin.created_at))
     runtime = get_plugin_manager()
-    return [
-        PluginOut(
-            name=p.name,
-            signature_valid=p.signature_valid,
-            size_bytes=p.size_bytes,
-            loaded=p.loaded,
-            error=p.error,
+    loaded_map = {p.name: p for p in runtime.list()}
+    out: list[PluginOut] = []
+    for p in rows.scalars().all():
+        info = loaded_map.get(p.name)
+        out.append(
+            PluginOut(
+                name=p.name,
+                signature_valid=bool(p.signature_valid),
+                size_bytes=len(p.wasm),
+                loaded=bool(info.loaded) if info else False,
+                error=info.error if info else None,
+            )
         )
-        for p in runtime.list()
-    ]
+    return out
+
+
+@admin_router.post("/plugins/{plugin_name}/invoke", response_model=PluginInvokeResult)
+async def invoke_plugin(
+    plugin_name: str,
+    _: PanelDep,
+    session: SessionDep,
+    body: PluginInvokeRequest,
+) -> PluginInvokeResult:
+    row = await session.execute(select(Plugin).where(Plugin.name == plugin_name).limit(1))
+    plugin = row.scalar_one_or_none()
+    if plugin is None:
+        raise NotFoundError(message=f"Plugin not found: {plugin_name}")
+    runtime = get_plugin_manager()
+    loaded = any(p.name == plugin_name for p in runtime.list())
+    if not loaded:
+        await runtime.load(plugin_name, plugin.wasm, plugin.signature)
+    result = await runtime.invoke(plugin_name, body.fn, body.args)
+    if isinstance(result, dict) and result.get("ok") is False:
+        return PluginInvokeResult(ok=False, error=result.get("error"))
+    return PluginInvokeResult(ok=True, result=result)
+
+
+# --- MCP management ---
+
+
+@admin_router.get("/mcp/servers", response_model=PaginatedResponse[McpServerOut])
+async def list_mcp_servers(
+    _: PanelDep,
+    session: SessionDep,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> PaginatedResponse[McpServerOut]:
+    total = int((await session.execute(select(func.count()).select_from(McpServer))).scalar_one() or 0)
+    rows = await session.execute(select(McpServer).order_by(McpServer.created_at).limit(limit).offset(offset))
+    items = [McpServerOut.model_validate(s) for s in rows.scalars().all()]
+    return PaginatedResponse[McpServerOut](items=items, total=total, limit=limit, offset=offset)
+
+
+@admin_router.post("/mcp/servers", response_model=McpServerOut, status_code=201)
+async def create_mcp_server(
+    _: PanelDep,
+    session: SessionDep,
+    body: CreateMcpServerRequest,
+) -> McpServerOut:
+    try:
+        server = McpServer(name=body.name, base_url=body.base_url, description=body.description)
+        session.add(server)
+        await session.commit()
+        await session.refresh(server)
+    except IntegrityError:
+        raise AppError(409, "duplicate", "MCP server name already exists") from None
+    return McpServerOut.model_validate(server)
+
+
+@admin_router.delete("/mcp/servers/{server_id}")
+async def delete_mcp_server(
+    server_id: str,
+    _: PanelDep,
+    session: SessionDep,
+) -> dict[str, bool]:
+    row = await session.execute(select(McpServer).where(McpServer.id == server_id).limit(1))
+    server = row.scalar_one_or_none()
+    if server is None:
+        raise NotFoundError(message=f"MCP server not found: {server_id}")
+    await session.delete(server)
+    await session.commit()
+    return {"ok": True}
+
+
+@admin_router.get("/mcp/permissions", response_model=PaginatedResponse[McpPermissionOut])
+async def list_mcp_permissions(
+    _: PanelDep,
+    session: SessionDep,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> PaginatedResponse[McpPermissionOut]:
+    total = int((await session.execute(select(func.count()).select_from(McpPermission))).scalar_one() or 0)
+    rows = await session.execute(
+        select(McpPermission).order_by(McpPermission.created_at).limit(limit).offset(offset)
+    )
+    items = [McpPermissionOut.model_validate(m) for m in rows.scalars().all()]
+    return PaginatedResponse[McpPermissionOut](items=items, total=total, limit=limit, offset=offset)
+
+
+@admin_router.post("/mcp/permissions", response_model=McpPermissionOut, status_code=201)
+async def create_mcp_permission(
+    _: PanelDep,
+    session: SessionDep,
+    body: CreateMcpPermissionRequest,
+) -> McpPermissionOut:
+    try:
+        perm = McpPermission(
+            agent_type=body.agent_type,
+            tool_name=body.tool_name,
+            allowed=1 if body.allowed else 0,
+            budget_per_day=body.budget_per_day,
+        )
+        session.add(perm)
+        await session.commit()
+        await session.refresh(perm)
+    except IntegrityError:
+        raise AppError(409, "duplicate", "Permission already exists for agent/tool") from None
+    return McpPermissionOut.model_validate(perm)
+
+
+@admin_router.delete("/mcp/permissions/{permission_id}")
+async def delete_mcp_permission(
+    permission_id: str,
+    _: PanelDep,
+    session: SessionDep,
+) -> dict[str, bool]:
+    row = await session.execute(select(McpPermission).where(McpPermission.id == permission_id).limit(1))
+    perm = row.scalar_one_or_none()
+    if perm is None:
+        raise NotFoundError(message=f"MCP permission not found: {permission_id}")
+    await session.delete(perm)
+    await session.commit()
+    return {"ok": True}
 
 
 @admin_router.post("/seed")

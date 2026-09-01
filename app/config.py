@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5173"
     PANEL_API_KEY: str = "dev-insecure-panel-key-change-me"
     AUTO_MIGRATE: int = 1
+    PLUGIN_PUBLIC_KEY_HEX: str = ""
 
     @property
     def is_sqlite(self) -> bool:

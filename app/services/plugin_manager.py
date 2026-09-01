@@ -1,8 +1,9 @@
-"""Plugin runtime abstraction — Noop by default, Wasmtime optional.
+"""Plugin runtime abstraction — Noop by default, Wasmtime when available.
 
-Ed25519 signature verification via the `cryptography` library (not the
-unmaintained `ed25519` package). Plugins are `.wasm` modules uploaded
-with X-Plugin-Signature (hex) headers.
+Ed25519 signature verification via `cryptography`. Plugins are `.wasm`
+modules stored in the `plugins` table (SSOT) and executed through
+wasmtime when the optional `plugins` extra is installed and a public key
+is configured. Never logs plugin bytes or signatures in full.
 """
 
 from __future__ import annotations
@@ -14,11 +15,9 @@ import structlog
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-logger = structlog.get_logger(__name__)
+from app.config import settings
 
-# In production, set this public key (hex, 64 chars) via environment config;
-# the placeholder is only for local/dev signature checks.
-PLUGIN_PUBLIC_KEY_HEX: str = ""
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -32,16 +31,17 @@ class PluginInfo:
 
 class PluginRuntime(Protocol):
     async def load(self, name: str, wasm_bytes: bytes, signature_hex: str) -> bool: ...
-    async def invoke(self, name: str, fn: str, args: dict[str, Any]) -> Any: ...
+    async def invoke(self, name: str, fn: str, args: Any) -> Any: ...
     def list(self) -> list[PluginInfo]: ...
 
 
-def verify_ed25519(payload: bytes, signature_hex: str, public_key_hex: str) -> bool:
-    if not public_key_hex:
+def verify_ed25519(payload: bytes, signature_hex: str, public_key_hex: str | None = None) -> bool:
+    pub_hex = public_key_hex or settings.PLUGIN_PUBLIC_KEY_HEX
+    if not pub_hex:
         return False
     try:
         signature = bytes.fromhex(signature_hex)
-        pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
+        pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub_hex))
         pub.verify(signature, payload)
         return True
     except (ValueError, InvalidSignature):
@@ -49,7 +49,7 @@ def verify_ed25519(payload: bytes, signature_hex: str, public_key_hex: str) -> b
 
 
 class NoopRuntime:
-    """Default runtime — accepts uploads, records metadata, no execution."""
+    """Default runtime — accepts uploads, verifies signatures, no execution."""
 
     def __init__(self) -> None:
         self._plugins: dict[str, PluginInfo] = {}
@@ -57,7 +57,7 @@ class NoopRuntime:
     async def load(self, name: str, wasm_bytes: bytes, signature_hex: str) -> bool:
         if not name:
             return False
-        valid = verify_ed25519(wasm_bytes, signature_hex, PLUGIN_PUBLIC_KEY_HEX)
+        valid = verify_ed25519(wasm_bytes, signature_hex)
         self._plugins[name] = PluginInfo(
             name=name,
             size_bytes=len(wasm_bytes),
@@ -67,8 +67,8 @@ class NoopRuntime:
         logger.info("plugin.loaded.noop", name=name, size=len(wasm_bytes), signature_valid=valid)
         return True
 
-    async def invoke(self, name: str, fn: str, args: dict[str, Any]) -> Any:
-        return {"ok": False, "error": "noop runtime: wasm execution not enabled"}
+    async def invoke(self, name: str, fn: str, args: Any) -> Any:
+        return {"ok": False, "error": "wasm execution not enabled (NoopRuntime)"}
 
     def list(self) -> list[PluginInfo]:
         return list(self._plugins.values())
@@ -78,18 +78,80 @@ class WasmtimeRuntime(NoopRuntime):
     """Wasmtime-backed runtime — requires the optional `plugins` extra."""
 
     def __init__(self) -> None:
-        try:
-            import wasmtime  # noqa: F401
-        except ImportError:
-            raise ImportError("wasmtime not installed — run: uv sync --extra plugins") from None
+        import wasmtime  # noqa: F401
+
         super().__init__()
-        self._engine: Any = None
+        self._instances: dict[str, Any] = {}
+        self._store: Any = None
+
+    async def load(self, name: str, wasm_bytes: bytes, signature_hex: str) -> bool:
+        import wasmtime
+
+        if not name:
+            return False
+        valid = verify_ed25519(wasm_bytes, signature_hex)
+        try:
+            engine = wasmtime.Engine()
+            store = wasmtime.Store(engine)
+            module = wasmtime.Module(engine, wasm_bytes)
+            instance = wasmtime.Instance(store, module, [])
+            self._instances[name] = (store, instance, module)
+            self._store = store
+            self._plugins[name] = PluginInfo(
+                name=name,
+                size_bytes=len(wasm_bytes),
+                loaded=True,
+                signature_valid=valid,
+            )
+            logger.info("plugin.loaded.wasmtime", name=name, size=len(wasm_bytes), signature_valid=valid)
+            return True
+        except Exception as exc:
+            logger.warning("plugin.load_failed", name=name, error=str(exc))
+            self._plugins[name] = PluginInfo(
+                name=name,
+                size_bytes=len(wasm_bytes),
+                loaded=False,
+                signature_valid=valid,
+                error=str(exc),
+            )
+            return False
+
+    async def invoke(self, name: str, fn: str, args: Any) -> Any:
+        entry = self._instances.get(name)
+        if entry is None:
+            return {"ok": False, "error": f"plugin not loaded: {name}"}
+        store, instance, module = entry
+        if not instance.get_export(store, fn):
+            return {"ok": False, "error": f"export not found: {fn}"}
+        try:
+            exported = instance.get_export(store, fn)
+            callable_fn = exported
+            if args is None:
+                result = callable_fn(store)
+            elif isinstance(args, list):
+                result = callable_fn(store, *args)
+            elif isinstance(args, dict):
+                result = callable_fn(store, **args)
+            else:
+                result = callable_fn(store, args)
+            return {"ok": True, "result": result}
+        except Exception as exc:
+            logger.warning("plugin.invoke_error", name=name, fn=fn, error=str(exc))
+            return {"ok": False, "error": str(exc)}
 
 
-_plugin_manager: PluginRuntime = NoopRuntime()
+_plugin_manager: PluginRuntime | None = None
 
 
 def get_plugin_manager() -> PluginRuntime:
+    global _plugin_manager
+    if _plugin_manager is None:
+        try:
+            _plugin_manager = WasmtimeRuntime()
+            logger.info("plugin.runtime=wasmtime")
+        except ImportError:
+            _plugin_manager = NoopRuntime()
+            logger.info("plugin.runtime=noop (wasmtime not installed)")
     return _plugin_manager
 
 
@@ -106,5 +168,4 @@ __all__ = [
     "verify_ed25519",
     "get_plugin_manager",
     "set_plugin_manager",
-    "PLUGIN_PUBLIC_KEY_HEX",
 ]

@@ -24,3 +24,4 @@ web/.env.local
 # Misc
 .DS_Store
 backup.sql
+.secrets/

@@ -4,7 +4,7 @@
 	import Badge from '$lib/components/ui/badge.svelte';
 	import Button from '$lib/components/ui/button.svelte';
 	import Input from '$lib/components/ui/input.svelte';
-	import { fetchPlugins, uploadPlugin } from '$lib/api';
+	import { fetchPlugins, uploadPlugin, invokePlugin } from '$lib/api';
 	import { showToast } from '$lib/stores';
 
 	let plugins = $state<any[]>([]);
@@ -12,6 +12,9 @@
 	let pluginSignature = $state('');
 	let file: File | undefined = $state();
 	let busy = $state(false);
+	let invokeFn = $state('add');
+	let invokeArgs = $state('[2, 3]');
+	let invokeResult = $state<Record<string, string>>({});
 
 	async function load() {
 		try {
@@ -37,6 +40,17 @@
 			busy = false;
 		}
 	}
+
+	async function invoke(pname: string) {
+		try {
+			const args = JSON.parse(invokeArgs);
+			invokeResult[pname] = 'invoking…';
+			const r = await invokePlugin(pname, invokeFn, args);
+			invokeResult[pname] = JSON.stringify(r, null, 2);
+		} catch (e: any) {
+			invokeResult[pname] = `Error: ${e.message}`;
+		}
+	}
 </script>
 
 <h1 class="text-2xl font-bold mb-6">Plugins</h1>
@@ -60,6 +74,7 @@
 				<th>Size</th>
 				<th>Signature</th>
 				<th>Status</th>
+				<th>Invoke</th>
 			</tr>
 		</thead>
 		<tbody>
@@ -76,10 +91,20 @@
 							<span class="text-xs text-red-400 ml-2">{p.error}</span>
 						{/if}
 					</td>
+					<td class="py-2">
+						<div class="flex items-center gap-2">
+							<Input placeholder="fn" bind:value={invokeFn} class="w-20" />
+							<Input placeholder="[2, 3]" bind:value={invokeArgs} class="w-24" />
+							<Button onclick={() => invoke(p.name)} class="!px-2 !py-1 !text-xs">Invoke</Button>
+						</div>
+						{#if invokeResult[p.name]}
+							<pre class="mt-1 text-xs text-zinc-400 whitespace-pre-wrap">{invokeResult[p.name]}</pre>
+						{/if}
+					</td>
 				</tr>
 			{/each}
 			{#if plugins.length === 0}
-				<tr><td colspan="4" class="py-4 text-center text-zinc-500">No plugins uploaded</td></tr>
+				<tr><td colspan="5" class="py-4 text-center text-zinc-500">No plugins uploaded</td></tr>
 			{/if}
 		</tbody>
 	</table>

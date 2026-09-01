@@ -16,6 +16,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -172,6 +173,20 @@ class ProviderKey(Base):
     )
 
 
+class Plugin(Base):
+    __tablename__ = "plugins"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    wasm: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    signature: Mapped[str] = mapped_column(Text, default="")
+    signature_valid: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow
+    )
+
+
 __all__ = [
     "Base",
     "Provider",
@@ -183,4 +198,5 @@ __all__ = [
     "McpPermission",
     "AgentUsage",
     "ProviderKey",
+    "Plugin",
 ]

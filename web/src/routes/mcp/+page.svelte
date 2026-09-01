@@ -1,22 +1,98 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import Card from '$lib/components/ui/card.svelte';
 	import Button from '$lib/components/ui/button.svelte';
 	import Input from '$lib/components/ui/input.svelte';
+	import Badge from '$lib/components/ui/badge.svelte';
 	import { getJSON, postJSON } from '$lib/api';
-	import { showToast, panelKey } from '$lib/stores';
-	import { get } from 'svelte/store';
+	import {
+		fetchMcpServers,
+		createMcpServer,
+		deleteMcpServer,
+		fetchMcpPermissions,
+		createMcpPermission,
+		deleteMcpPermission
+	} from '$lib/api';
+	import { showToast } from '$lib/stores';
+
+	let servers = $state<any[]>([]);
+	let permissions = $state<any[]>([]);
+
+	let newServerName = $state('');
+	let newServerUrl = $state('');
+	let newServerDesc = $state('');
+
+	let newPermAgent = $state('');
+	let newPermTool = $state('');
+	let newPermBudget = $state('0');
 
 	let serverName = $state('');
 	let toolName = $state('');
 	let method = $state('tools/list');
 	let params = $state('{}');
 	let result = $state('');
+	let busy = $state(false);
+
+	async function load() {
+		try {
+			const [s, p] = await Promise.all([fetchMcpServers(100, 0), fetchMcpPermissions(100, 0)]);
+			servers = s.items;
+			permissions = p.items;
+			if (!serverName && servers.length) serverName = servers[0].name;
+		} catch (e: any) {
+			showToast(e.message, 'error');
+		}
+	}
+	onMount(load);
+
+	async function addServer() {
+		if (!newServerName || !newServerUrl) return;
+		try {
+			await createMcpServer({ name: newServerName, base_url: newServerUrl, description: newServerDesc });
+			showToast('Server added', 'success');
+			newServerName = newServerUrl = newServerDesc = '';
+			await load();
+		} catch (e: any) {
+			showToast(e.message, 'error');
+		}
+	}
+
+	async function removeServer(id: string) {
+		try {
+			await deleteMcpServer(id);
+			await load();
+		} catch (e: any) {
+			showToast(e.message, 'error');
+		}
+	}
+
+	async function addPermission() {
+		if (!newPermAgent || !newPermTool) return;
+		try {
+			await createMcpPermission({
+				agent_type: newPermAgent,
+				tool_name: newPermTool,
+				allowed: true,
+				budget_per_day: parseFloat(newPermBudget) || 0
+			});
+			showToast('Permission added', 'success');
+			newPermAgent = newPermTool = '';
+			await load();
+		} catch (e: any) {
+			showToast(e.message, 'error');
+		}
+	}
+
+	async function removePermission(id: string) {
+		try {
+			await deleteMcpPermission(id);
+			await load();
+		} catch (e: any) {
+			showToast(e.message, 'error');
+		}
+	}
 
 	async function call() {
-		if (!get(panelKey)) {
-			showToast('Login first', 'error');
-			return;
-		}
 		result = '';
 		let parsed: any;
 		try {
@@ -25,6 +101,7 @@
 			showToast('Invalid JSON in params', 'error');
 			return;
 		}
+		busy = true;
 		try {
 			const p = { server: serverName, tool: toolName, ...parsed };
 			const r = await postJSON<any>('/mcp', {
@@ -36,17 +113,76 @@
 			result = JSON.stringify(r, null, 2);
 		} catch (e: any) {
 			result = `Error: ${e.message}`;
+		} finally {
+			busy = false;
 		}
 	}
 </script>
 
 <h1 class="text-2xl font-bold mb-6">MCP</h1>
 
-<p class="text-sm text-zinc-500 mb-4">JSON-RPC 2.0 test interface for MCP servers</p>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+	<Card>
+		<h2 class="text-sm font-semibold mb-3">Servers</h2>
+		<div class="space-y-1 mb-3 max-h-56 overflow-auto">
+			{#each servers as s}
+				<div class="flex items-center justify-between gap-2 rounded bg-zinc-800/60 px-2 py-1.5 text-xs">
+					<div class="min-w-0">
+						<span class="font-medium text-zinc-200">{s.name}</span>
+						<span class="text-zinc-500 ml-2 truncate">{s.base_url}</span>
+					</div>
+					<button onclick={() => removeServer(s.id)} class="text-red-400 hover:text-red-300 shrink-0">✕</button>
+				</div>
+			{/each}
+			{#if servers.length === 0}
+				<p class="text-center text-zinc-600 text-xs py-3">No servers</p>
+			{/if}
+		</div>
+		<div class="space-y-2">
+			<Input placeholder="Name" bind:value={newServerName} />
+			<Input placeholder="Base URL" bind:value={newServerUrl} />
+			<Input placeholder="Description (optional)" bind:value={newServerDesc} />
+			<Button onclick={addServer} disabled={!newServerName || !newServerUrl}>Add server</Button>
+		</div>
+	</Card>
+
+	<Card>
+		<h2 class="text-sm font-semibold mb-3">Permissions</h2>
+		<div class="space-y-1 mb-3 max-h-56 overflow-auto">
+			{#each permissions as perm}
+				<div class="flex items-center justify-between gap-2 rounded bg-zinc-800/60 px-2 py-1.5 text-xs">
+					<div>
+						<span class="text-zinc-200">{perm.agent_type}</span>
+						<span class="text-zinc-500"> → {perm.tool_name}</span>
+						<Badge variant={perm.allowed ? 'success' : 'danger'}>{perm.allowed ? 'allowed' : 'denied'}</Badge>
+						<span class="text-zinc-500">budget ${perm.budget_per_day}</span>
+					</div>
+					<button onclick={() => removePermission(perm.id)} class="text-red-400 hover:text-red-300 shrink-0">✕</button>
+				</div>
+			{/each}
+			{#if permissions.length === 0}
+				<p class="text-center text-zinc-600 text-xs py-3">No permissions</p>
+			{/if}
+		</div>
+		<div class="flex gap-2 items-center">
+			<Input placeholder="agent_type" bind:value={newPermAgent} class="flex-1" />
+			<Input placeholder="tool_name" bind:value={newPermTool} class="flex-1" />
+			<Input placeholder="budget" bind:value={newPermBudget} class="w-20" />
+		</div>
+		<Button onclick={addPermission} disabled={!newPermAgent || !newPermTool} class="mt-2">Add permission</Button>
+	</Card>
+</div>
 
 <Card class="mb-6">
 	<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-		<Input placeholder="Server name" bind:value={serverName} />
+		<div>
+			<label for="mcp-server" class="text-xs text-zinc-500 block mb-1">Server</label>
+			<select id="mcp-server" class="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100" bind:value={serverName}>
+				{#each servers as s}
+					<option value={s.name}>{s.name}</option>
+				{/each}
+			</select>
+		</div>
 		<Input placeholder="Tool name (for tools/call)" bind:value={toolName} />
 		<select class="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100" bind:value={method}>
 			<option value="initialize">initialize</option>
@@ -61,7 +197,7 @@
 		rows={4}
 		bind:value={params}
 	></textarea>
-	<Button onclick={call}>Send</Button>
+	<Button onclick={call} disabled={busy || !serverName}>{busy ? '…' : 'Send'}</Button>
 </Card>
 
 {#if result}
