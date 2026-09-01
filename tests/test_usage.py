@@ -83,6 +83,15 @@ async def test_resolve_cost_unknown() -> None:
 # --- /models parsing ---
 
 
+async def test_resolve_cost_free_model_zero() -> None:
+    """A model marked free always costs $0, even if it has pricing."""
+    r = _resolved(is_free=True, pricing={"prompt": 1e-6, "completion": 2e-6})
+    data = {"usage": {"cost": 0.5}}  # provider would never bill a free model
+    cost, known = _resolve_cost(r, data, tokens_in=1000, tokens_out=500)
+    assert cost == 0.0
+    assert known is True
+
+
 async def test_parse_model_items_pricing_free() -> None:
     from app.models import Provider
 
@@ -262,17 +271,30 @@ async def test_manual_pricing_reconciles_existing_rows(client: AsyncClient, db_s
         price_known=False,
     )
 
+    # set free + pricing — free overrides cost to 0
     resp = await client.patch(
         f"/v1/admin/models/{model_id}/pricing",
         headers=ADMIN_HEADERS,
         json={"price_prompt_per_token": 1e-6, "price_completion_per_token": 2e-6, "free": True},
     )
     assert resp.status_code == 200
-
+    db_session.expire_all()
     rows = (await db_session.execute(select(AgentUsage).where(AgentUsage.model_id == model_id))).scalars().all()
     assert len(rows) == 1
     assert rows[0].price_known == 1
     assert rows[0].is_free == 1
+    assert rows[0].cost_usd == 0.0  # free → cost 0 regardless of pricing
+
+    # set not free → compute from pricing
+    resp = await client.patch(
+        f"/v1/admin/models/{model_id}/pricing",
+        headers=ADMIN_HEADERS,
+        json={"free": False},
+    )
+    assert resp.status_code == 200
+    db_session.expire_all()  # drop identity-map cache so we see committed values
+    rows = (await db_session.execute(select(AgentUsage).where(AgentUsage.model_id == model_id))).scalars().all()
+    assert rows[0].is_free == 0
     assert rows[0].cost_usd == pytest.approx(0.001 + 0.001)
 
 

@@ -339,17 +339,19 @@ class ProviderManager:
         rows = await session.execute(
             select(AgentUsage).where(
                 AgentUsage.model_id == model.id,
-                AgentUsage.price_known == 0,
             )
         )
         for row in rows.scalars().all():
-            if has_pricing:
+            row.is_free = 1 if is_free else 0
+            if is_free:
+                row.cost_usd = 0.0
+                row.price_known = 1
+            elif has_pricing:
                 row.cost_usd = row.tokens_in * p + row.tokens_out * c + r
                 row.price_known = 1
             else:
                 row.cost_usd = 0.0
                 row.price_known = 0
-            row.is_free = 1 if is_free else 0
         await session.commit()
 
 

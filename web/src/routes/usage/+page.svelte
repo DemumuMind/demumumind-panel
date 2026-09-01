@@ -38,19 +38,18 @@
 	let maxProvTokens = $derived(Math.max(...providerItems.map((i) => i.tokens_in + i.tokens_out), 1));
 
 	function fmtCost(u: any): { text: string; cls: string; title: string } {
-		if (u.unknown_requests === u.requests && u.requests > 0) {
+		if (u.requests === 0) return { text: '—', cls: 'text-(--text-faint)', title: 'No requests' };
+		if (u.unknown_requests === u.requests) {
 			return { text: '—', cls: 'text-(--text-faint)', title: 'Cost not disclosed by provider' };
-		}
-		if (u.cost_usd > 0.000001) {
-			return { text: `$${u.cost_usd.toFixed(6)}`, cls: 'tabular-nums', title: `Total cost: $${u.cost_usd.toFixed(6)}` };
 		}
 		if (u.free_requests === u.requests) {
 			return { text: 'Free', cls: 'text-emerald-400', title: 'All requests were free / unlimited' };
 		}
-		if (u.cost_usd <= 0.000001) {
-			return { text: 'Free', cls: 'text-emerald-400', title: 'Cost was zero (free models)' };
+		if (u.cost_usd > 0.000001) {
+			return { text: `$${u.cost_usd.toFixed(6)}`, cls: 'tabular-nums', title: `Total cost: $${u.cost_usd.toFixed(6)}` };
 		}
-		return { text: `$${u.cost_usd.toFixed(6)}`, cls: 'tabular-nums', title: '' };
+		// mixed: free + unknown, zero cost
+		return { text: 'Free/—', cls: 'text-(--text-faint)', title: 'Free + cost unknown' };
 	}
 </script>
 

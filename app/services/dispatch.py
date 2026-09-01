@@ -106,9 +106,12 @@ def _resolve_cost(
 ) -> tuple[float, bool]:
     """Return (cost_usd, price_known) for a completed request.
 
-    Priority: provider-reported `usage.cost` -> computed from per-token
-    pricing in the model record -> unknown (0.0, price_known=False).
+    Free models always cost $0 (price_known=True). Otherwise priority:
+    provider-reported `usage.cost` -> computed from per-token pricing in
+    the model record -> unknown (0.0, price_known=False).
     """
+    if resolved and resolved.is_free:
+        return 0.0, True
     usage = data_or_usage.get("usage") if isinstance(data_or_usage, dict) else None
     provider_cost = _cost_from_usage(usage)
     if provider_cost is not None:
