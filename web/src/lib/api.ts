@@ -110,6 +110,7 @@ export async function discoverProviderStream(
 	const decoder = new TextDecoder();
 	let buffer = '';
 	let done: any = null;
+	let lastError: string | null = null;
 	while (true) {
 		const { done: finished, value } = await reader.read();
 		if (finished) break;
@@ -122,12 +123,16 @@ export async function discoverProviderStream(
 			const data = trimmed.slice(5).trim();
 			try {
 				const event = JSON.parse(data);
+				if (event.event === 'error') lastError = event.message || 'Provider unreachable';
 				if (event.event === 'done') done = event.result;
 				onEvent(event);
 			} catch {
 				// skip malformed lines
 			}
 		}
+	}
+	if (done === null) {
+		throw new Error(lastError || 'Provider request failed: no result');
 	}
 	return done;
 }

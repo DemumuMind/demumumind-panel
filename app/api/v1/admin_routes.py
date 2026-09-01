@@ -209,8 +209,17 @@ async def discover_provider_models_endpoint(
     request_id = getattr(request.state, "request_id", "")
 
     async def _event_stream() -> AsyncIterator[str]:
-        async for event in discover_and_test_stream(provider, session, request_id, test=test):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        try:
+            async for event in discover_and_test_stream(provider, session, request_id, test=test):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except AppError as exc:
+            msg = exc.detail or exc.message
+            payload = json.dumps({"event": "error", "message": msg, "code": exc.status_code}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+        except Exception as exc:
+            err = str(exc)[:300]
+            payload = json.dumps({"event": "error", "message": err, "code": 502}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
 
     return StreamingResponse(_event_stream(), media_type="text/event-stream")
 

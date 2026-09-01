@@ -120,6 +120,7 @@
 			const r = await discoverProviderStream(id, false, (ev) => {
 				if (ev.event === 'stage') progress[id] = { ...progress[id], stage: ev.stage, total: ev.total ?? progress[id].total };
 				else if (ev.event === 'import') progress[id] = { ...progress[id], current: ev.current, total: ev.total };
+				else if (ev.event === 'error') progress[id] = { ...progress[id], stage: 'error' };
 				else if (ev.event === 'test') {
 					progress[id] = {
 						...progress[id],
@@ -129,6 +130,7 @@
 					};
 				}
 			});
+			if (!r) throw new Error('No result from provider');
 			discoverResults[id] = r;
 			showToast(`Discover: ${r.total} models imported ${r.imported}`, 'success');
 			await load();
@@ -147,6 +149,7 @@
 			const r = await discoverProviderStream(id, true, (ev) => {
 				if (ev.event === 'stage') progress[id] = { ...progress[id], stage: ev.stage, total: ev.total ?? progress[id].total };
 				else if (ev.event === 'import') progress[id] = { ...progress[id], current: ev.current, total: ev.total };
+				else if (ev.event === 'error') progress[id] = { ...progress[id], stage: 'error' };
 				else if (ev.event === 'test') {
 					progress[id] = {
 						...progress[id],
@@ -156,8 +159,9 @@
 					};
 				}
 			});
+			if (!r) throw new Error('No result from provider');
 			discoverResults[id] = r;
-			showToast(`Test: ${r.ok_count}/${r.total} ok`, r.ok_count > 0 ? 'success' : 'info');
+			showToast(`Test: ${r.ok_count}/${r.total} ok`, (r.ok_count ?? 0) > 0 ? 'success' : 'info');
 			await load();
 		} catch (e: any) {
 			showToast(e.message, 'error');
