@@ -39,13 +39,17 @@ limiter = Limiter(key_func=get_remote_address)
 root_router = APIRouter(tags=["root"])
 v1_router = APIRouter(prefix="/v1", tags=["v1"])
 
+PANEL_SENTINEL = "__panel__"
+
 
 async def require_client_key(request: Request) -> str:
     auth = AuthState(request)
     key_hash = await auth.client_key_hash()
-    if key_hash is None:
-        raise AuthError(message="Missing or invalid API key", request_id=getattr(request.state, "request_id", None))
-    return key_hash
+    if key_hash is not None:
+        return key_hash
+    if await auth.is_panel_authorized():
+        return PANEL_SENTINEL
+    raise AuthError(message="Missing or invalid API key", request_id=getattr(request.state, "request_id", None))
 
 
 async def require_panel(request: Request) -> None:

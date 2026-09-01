@@ -14,6 +14,7 @@
 	let response = $state('');
 	let busy = $state(false);
 	let temperature = $state('0.7');
+	let maxTokens = $state('256');
 
 	onMount(async () => {
 		try {
@@ -47,6 +48,7 @@
 				model: selectedModel,
 				messages: messages.filter((m) => m.content.trim()),
 				temperature: parseFloat(temperature),
+				max_tokens: parseInt(maxTokens) || undefined,
 				stream: false
 			});
 			response = JSON.stringify(r, null, 2);
@@ -74,6 +76,10 @@
 			<label for="pg-temp" class="text-xs text-zinc-500 block mb-1">Temp</label>
 			<Input id="pg-temp" type="number" bind:value={temperature} min="0" max="2" step="0.1" />
 		</div>
+		<div class="w-full sm:w-24">
+			<label for="pg-max" class="text-xs text-zinc-500 block mb-1">Max tokens</label>
+			<Input id="pg-max" type="number" bind:value={maxTokens} min="1" max="99999" step="1" />
+		</div>
 	</div>
 
 	{#each messages as msg, i}
@@ -86,6 +92,7 @@
 				<option value="system">system</option>
 				<option value="user">user</option>
 				<option value="assistant">assistant</option>
+				<option value="tool">tool</option>
 			</select>
 			<textarea
 				class="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
