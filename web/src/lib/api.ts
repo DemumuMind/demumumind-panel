@@ -127,16 +127,24 @@ export async function chatCompletions(body: any) {
 	return postJSON<any>('/v1/chat/completions', body);
 }
 
+export interface ChatUsage {
+	prompt_tokens?: number;
+	completion_tokens?: number;
+	total_tokens?: number;
+	prompt_tokens_details?: { cached_tokens?: number };
+	completion_tokens_details?: { reasoning_tokens?: number; accepted_prediction_tokens?: number; rejected_prediction_tokens?: number };
+}
+
 export async function* streamChat(
 	body: any
-): AsyncGenerator<{ content?: string; reasoning?: string }> {
+): AsyncGenerator<{ content?: string; reasoning?: string; usage?: ChatUsage }> {
 	const key = get(panelKey);
 	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 	if (key) headers['Authorization'] = `Bearer ${key}`;
 	const res = await fetch(`${BASE}/v1/chat/completions`, {
 		method: 'POST',
 		headers,
-		body: JSON.stringify({ ...body, stream: true })
+		body: JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } })
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -159,12 +167,13 @@ export async function* streamChat(
 			if (data === '[DONE]') return;
 			try {
 				const parsed = JSON.parse(data);
+				const out: { content?: string; reasoning?: string; usage?: ChatUsage } = {};
+				if (parsed.usage) out.usage = parsed.usage as ChatUsage;
 				const delta = parsed.choices?.[0]?.delta || {};
-				const out: { content?: string; reasoning?: string } = {};
 				if (typeof delta.content === 'string' && delta.content) out.content = delta.content;
 				if (typeof delta.reasoning_content === 'string' && delta.reasoning_content)
 					out.reasoning = delta.reasoning_content;
-				if (out.content !== undefined || out.reasoning !== undefined) yield out;
+				if (out.content !== undefined || out.reasoning !== undefined || out.usage !== undefined) yield out;
 			} catch {
 				// skip malformed/keepalive lines
 			}

@@ -4,17 +4,25 @@
 	import Select from '$lib/components/ui/select.svelte';
 	import Input from '$lib/components/ui/input.svelte';
 	import { getJSON, streamChat } from '$lib/api';
+	import type { ChatUsage } from '$lib/api';
 	import { panelKey, showToast } from '$lib/stores';
 	import { get } from 'svelte/store';
 	import { onMount } from 'svelte';
 
 	let models = $state<any[]>([]);
 	let selectedModel = $state('');
-	let history = $state<{ role: string; content: string; reasoning?: string }[]>([]);
+	let modelFilter = $state('');
+	let history = $state<{ role: string; content: string; reasoning?: string; usage?: ChatUsage }[]>([]);
 	let draft = $state('');
 	let busy = $state(false);
 	let temperature = $state('0.7');
 	let maxTokens = $state('256');
+
+	let filteredModels = $derived(
+		modelFilter
+			? models.filter((m) => m.user_model_id.toLowerCase().includes(modelFilter.toLowerCase()))
+			: models
+	);
 
 	onMount(async () => {
 		try {
@@ -57,6 +65,7 @@
 			})) {
 				if (chunk.content) history[idx].content += chunk.content;
 				if (chunk.reasoning) history[idx].reasoning = (history[idx].reasoning || '') + chunk.reasoning;
+				if (chunk.usage) history[idx].usage = chunk.usage;
 			}
 		} catch (e: any) {
 			history[idx].content = `Error: ${e.message}`;
@@ -71,6 +80,57 @@
 			send();
 		}
 	}
+
+	function clearChat() {
+		history = [];
+		draft = '';
+		busy = false;
+	}
+
+	function download(filename: string, content: string, mime: string) {
+		const blob = new Blob([content], { type: mime });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = filename;
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		URL.revokeObjectURL(url);
+	}
+
+	function exportChat(format: 'md' | 'json') {
+		const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+		if (format === 'json') {
+			const data = history.map((m) => ({
+				role: m.role,
+				content: m.content,
+				reasoning: m.reasoning,
+				usage: m.usage
+			}));
+			download(`demumumind-chat-${stamp}.json`, JSON.stringify(data, null, 2), 'application/json');
+			return;
+		}
+		const lines: string[] = ['# DemumuMind Playground', ''];
+		for (const m of history) {
+			if (m.role === 'user') {
+				lines.push('**User:**', '', m.content, '');
+			} else {
+				lines.push('**Assistant:**', '');
+				if (m.reasoning) lines.push('<details><summary>Мысли</summary>', '', m.reasoning, '', '</details>', '');
+				lines.push(m.content, '');
+				if (m.usage) {
+					const u = m.usage;
+					lines.push(
+						`_Usage: prompt ${u.prompt_tokens ?? '-'}, completion ${u.completion_tokens ?? '-'}, total ${u.total_tokens ?? '-'}, cached ${u.prompt_tokens_details?.cached_tokens ?? '-'}, reasoning ${u.completion_tokens_details?.reasoning_tokens ?? '-'}_`,
+						''
+					);
+				}
+				lines.push('---', '');
+			}
+		}
+		download(`demumumind-chat-${stamp}.md`, lines.join('\n'), 'text/markdown');
+	}
 </script>
 
 <h1 class="text-2xl font-bold mb-6">Playground</h1>
@@ -80,10 +140,11 @@
 		<div class="flex-1 w-full">
 			<label for="pg-model" class="text-xs text-zinc-500 block mb-1">Model</label>
 			<Select id="pg-model" bind:value={selectedModel}>
-				{#each models as m}
+				{#each filteredModels as m}
 					<option value={m.user_model_id}>{m.user_model_id} ({m.provider?.name})</option>
 				{/each}
 			</Select>
+			<Input id="pg-filter" type="text" placeholder="Фильтр моделей…" bind:value={modelFilter} class="mt-2" />
 		</div>
 		<div class="w-full sm:w-24">
 			<label for="pg-temp" class="text-xs text-zinc-500 block mb-1">Temp</label>
@@ -110,6 +171,20 @@
 						</details>
 					{/if}
 					<div class="whitespace-pre-wrap">{msg.content || (busy && i === history.length - 1 ? '…' : '')}</div>
+					{#if msg.usage}
+						<details class="mt-2">
+							<summary class="cursor-pointer text-xs text-zinc-500 select-none">ⓘ Usage</summary>
+							<table class="mt-1 text-xs text-zinc-400">
+								<tbody>
+									<tr><td class="pr-4">prompt_tokens</td><td class="text-right">{msg.usage.prompt_tokens ?? '-'}</td></tr>
+									<tr><td class="pr-4">completion_tokens</td><td class="text-right">{msg.usage.completion_tokens ?? '-'}</td></tr>
+									<tr><td class="pr-4">total_tokens</td><td class="text-right">{msg.usage.total_tokens ?? '-'}</td></tr>
+									<tr><td class="pr-4">cached_tokens</td><td class="text-right">{msg.usage.prompt_tokens_details?.cached_tokens ?? '-'}</td></tr>
+									<tr><td class="pr-4">reasoning_tokens</td><td class="text-right">{msg.usage.completion_tokens_details?.reasoning_tokens ?? '-'}</td></tr>
+								</tbody>
+							</table>
+						</details>
+					{/if}
 				</div>
 			{/if}
 		{/each}
@@ -128,6 +203,15 @@
 		></textarea>
 		<Button onclick={send} disabled={busy || !draft.trim() || !selectedModel}>
 			{busy ? '…' : 'Send'}
+		</Button>
+		<Button onclick={clearChat} disabled={history.length === 0} class="!bg-zinc-700 hover:!bg-zinc-600">
+			Clear
+		</Button>
+		<Button onclick={() => exportChat('md')} disabled={history.length === 0} class="!bg-zinc-700 hover:!bg-zinc-600">
+			MD
+		</Button>
+		<Button onclick={() => exportChat('json')} disabled={history.length === 0} class="!bg-zinc-700 hover:!bg-zinc-600">
+			JSON
 		</Button>
 	</div>
 </Card>
