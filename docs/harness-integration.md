@@ -103,7 +103,7 @@ export ANTHROPIC_API_KEY=dm-...
 ```
 
 Claude Code sends `POST /messages` which the panel translates through
-`app/api/v1/routes.py:158`.
+`app/api/v1/routes.py:185`.
 
 ---
 
@@ -128,6 +128,24 @@ curl -H "Authorization: Bearer dm-..." \
 Each model is routed through its upstream provider automatically.
 Pricing and free/unlimited badges are shown in the Usage page and
 can be configured per model in the Panel's Models page.
+
+### Image generation
+
+```bash
+curl -H "Authorization: Bearer dm-..." -H "Content-Type: application/json" \
+  -d '{"model":"gpt-image-2","prompt":"a red apple","n":1,"size":"1024x1024"}' \
+  https://test-sprite-busun.sprites.app/demumumind/v1/images/generations
+```
+
+Image models are auto-detected at discovery and routed to the images endpoint.
+Generated images appear on the panel's **Images** page (`/images`).
+
+### Usage by provider
+
+```bash
+curl -H "Authorization: Bearer dm-..." \
+  https://test-sprite-busun.sprites.app/demumumind/v1/usage/by-provider?limit=10 | jq .
+```
 
 ## Key management
 

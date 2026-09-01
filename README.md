@@ -1,7 +1,8 @@
 # DemumuMind — Panel
 
-Enterprise AI Gateway. Aggregates any OpenAI/Anthropic/Gemini-compatible
-provider into a single API + browser admin panel.
+Enterprise AI Gateway. Aggregates any OpenAI/Anthropic/Gemini/Cohere/Ollama-compatible
+provider (plus Azure, Mistral, xAI, Groq, Together, DeepSeek) into a single API
++ browser admin panel.
 
 ## Quick start
 
@@ -48,6 +49,11 @@ curl -H "Authorization: Bearer dm-<key>" \
   -d '{"model":"my-model","messages":[{"role":"user","content":"hi"}]}' \
   http://localhost:8000/v1/chat/completions
 
+# image generation
+curl -H "Authorization: Bearer dm-<key>" -H "Content-Type: application/json" \
+  -d '{"model":"gpt-image-2","prompt":"red apple","n":1,"size":"1024x1024"}' \
+  http://localhost:8000/v1/images/generations
+
 # тесты и линты
 make test
 make lint
@@ -71,15 +77,15 @@ PROJECT_ROOT/
 │   ├── api/       # HTTP routes (v1 public + admin, MCP, auth)
 │   ├── core/      # DB, Redis, error handlers
 │   ├── services/  # translate, failover, dispatch, cache, plugins, MCP
-│   ├── models.py  # 8 SQLAlchemy tables (SSOT)
+│   ├── models.py  # 11 SQLAlchemy tables (SSOT)
 │   ├── schemas.py # Pydantic DTOs
 │   ├── seed.py    # Idempotent seed
 │   └── main.py    # FastAPI app + lifespan
 ├── web/           # SvelteKit admin panel
 ├── alembic/       # Migrations
-├── tests/         # pytest-asyncio (75+ tests)
+├── tests/         # pytest-asyncio (89 tests)
 ├── docs/          # Integration guides
-├── harness/       # Example configs for LLM harnesses
+├── harness/       # Example configs + load test
 └── demumumind.service
 ```
 
@@ -108,3 +114,20 @@ curl -H "Authorization: Bearer dm-..." \
 See [docs/harness-integration.md](docs/harness-integration.md) and
 [harness/examples/](harness/examples/) for opencode, omp, Claude Code,
 and Codex configuration examples.
+
+## Image generation
+
+The panel proxies `/v1/images/generations` to any OpenAI-compatible
+provider. Generated images are stored in `data/images/` and shown
+in the **Images** admin page. Image models (`gpt-image`, `dall-e`,
+`flux`, `sdxl`…) are auto-detected at discovery, marked `kind=image`,
+and routed to the images endpoint on chat requests.
+
+## Migrations
+
+Alembic with `AUTO_MIGRATE=1` runs `alembic upgrade head` on boot.
+To switch to PostgreSQL:
+```bash
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost/demumumind
+python3 scripts/migrate_sqlite_to_postgres.py
+```

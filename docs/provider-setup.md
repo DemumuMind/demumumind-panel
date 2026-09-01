@@ -27,10 +27,10 @@ Fields:
 | `name` | yes | unique, human label |
 | `base_url` | yes | must include `/v1` if provider expects `/v1/models`, no trailing `/` needed (`pool.py` normalizes) |
 | `api_key` | no | leave `null` for keyless (ollama `http://localhost:11434/v1`) |
-| `protocol` | no | `openai` (default, covers 95% generic), `anthropic`, `gemini` |
+| `protocol` | no | `openai` (default, covers most generic), `anthropic`, `gemini`, `cohere`, `ollama`, `azure` |
 | `is_active` | no | `true` by default |
 
-**base_url pitfalls:** `https://api.anthropic.com/v1` + `protocol=anthropic` → path `v1/messages` → full `.../v1/v1/messages` (double). Use `https://api.anthropic.com` for anthropic, `https://api.openai.com/v1` for openai. UI does not validate scheme — `http://` for local is fine.
+**base_url pitfalls:** `https://api.anthropic.com/v1` + `protocol=anthropic` → path `v1/messages` → full `.../v1/v1/messages` (double). Use `https://api.anthropic.com` for anthropic, `https://api.openai.com/v1` for openai. `base_url` is validated on create/update — must include `http://` or `https://`.
 
 ### 2. Discover models
 
@@ -60,7 +60,7 @@ curl -H "Authorization: Bearer $PANEL_API_KEY" -H "Content-Type: application/jso
   https://test-sprite-busun.sprites.app/demumumind/v1/admin/models -X POST
 ```
 
-**Alias collision:** `user_model_id` is globally unique for routing (`POST /v1/chat/completions {"model":"gpt-4o"}` is unambiguous). If second provider lists `gpt-4o` already owned by first, discover skips it (`skipped_global_alias` in log) instead of 500. Use provider-prefixed alias (`openrouter/gpt-4o`) or per-key `model_mapping` to disambiguate.
+**Alias collision:** `user_model_id` is composite-unique per `(provider_id, user_model_id)` — the same alias is allowed across providers. `resolve()` returns the first active match (default provider wins); use `"provider-name/alias"` (e.g. `openrouter/gpt-4o`) or per-key `model_mapping` to target a specific provider.
 
 ### 3. Test
 
@@ -90,16 +90,26 @@ Auto from `/models` `pricing` or `usage.cost` (OpenRouter). For providers that d
 
 ### 6. Local providers
 
-Ollama: `base_url=http://host.docker.internal:11434/v1`, `api_key=null`, `protocol=openai`. Same for vLLM/LMStudio.
+Ollama: `base_url=http://host.docker.internal:11434`, `api_key=null`, `protocol=ollama`
+(panel sends `/api/chat`, translates images/options). Same for vLLM/LMStudio with
+`protocol=openai` (`http://host.docker.internal:8000/v1`).
+
+## Image models
+
+Providers listing `gpt-image`, `dall-e`, `flux`, `sdxl`, `imagen`… get `kind=image`
+in model metadata. They are excluded from the chat workability test (`ok/listed`)
+and routed to `/v1/images/generations` — either directly or automatically when
+a chat request targets an image model. Generated images land in `data/images/`
+and appear on the admin **Images** page.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Discover: 0 models` | provider returns `{models:[...]}` not `{data:[{id}]}` | Check `parse_model_items` fallback, or add manually |
-| `Cannot read properties of null (reading 'ok_count')` | already fixed `325975a` — now shows `event:error` toast | update panel |
-| `UNIQUE constraint failed: models.user_model_id` | fixed `325975a` — now skips global alias | use prefixed alias |
-| `HTTP 401` on test/discover | wrong `api_key` or missing `Bearer` | verify `pool.py:18` headers per protocol |
-| `database is locked` | SQLite WAL under 16+ concurrent writers | already mitigated `busy_timeout 30000` + retry, or switch to Postgres `DATABASE_URL=postgresql+asyncpg://` |
+| `Discover: 0 models` | provider returns a non-standard `/models` shape | Add models manually via `POST /v1/admin/models` |
+| `Cannot read properties of null (reading 'ok_count')` | provider `/models` unreachable aborted the SSE | fixed — panel now emits `event:error` with the upstream message; update panel |
+| `UNIQUE constraint failed: models.user_model_id` | same alias inserted twice for one provider | composite `(provider_id, user_model_id)` unique — re-run discover, or use `provider/alias` |
+| `HTTP 401` on test/discover | wrong `api_key` or wrong auth header | verify `app/services/pool.py` `_PROTOCOL_HEADERS` for the protocol (azure uses `api-key`, anthropic `x-api-key`, gemini `x-goog-api-key`, others Bearer) |
+| `database is locked` | SQLite WAL under many concurrent writers | mitigated `busy_timeout 30000` + retry in `dispatch`; for higher load switch to Postgres (`DATABASE_URL=postgresql+asyncpg://…`) + `scripts/migrate_sqlite_to_postgres.py` |
 
 See also `docs/harness-integration.md` for consuming the panel from opencode/omp.

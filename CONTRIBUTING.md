@@ -44,10 +44,14 @@ pnpm -C web svelte-check
 app/
   api/v1/     # HTTP: публичные + admin роуты, MCP, middleware
   core/       # DB, Redis, ошибки
+  models.py   # 11 SQLAlchemy таблиц (SSOT)
   services/   # translate, failover, dispatch, cache, плагины, MCP
 web/          # SvelteKit админка
-tests/        # pytest-asyncio
+tests/        # pytest-asyncio (89 тестов)
 alembic/      # миграции
+docs/         # гайды (harness, provider setup)
+harness/      # примеры конфигов + load test
+data/         # backup + сгенерированные images
 ```
 
 ## Баги и вопросы
