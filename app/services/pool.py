@@ -59,11 +59,17 @@ class ProviderPool:
         method: str,
         json_body: dict[str, Any] | None,
         request_id: str,
+        request_timeout: float | None = None,
     ) -> Response:
         client = self._get_client()
         headers = self.auth_headers(provider)
         headers["X-Request-ID"] = request_id
-        return await client.request(method.upper(), self._url(provider, path), headers=headers, json=json_body)
+        kwargs: dict[str, Any] = {}
+        if request_timeout is not None:
+            kwargs["timeout"] = Timeout(request_timeout)
+        return await client.request(
+            method.upper(), self._url(provider, path), headers=headers, json=json_body, **kwargs
+        )
 
     async def request_stream(
         self,

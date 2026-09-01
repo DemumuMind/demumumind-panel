@@ -153,6 +153,7 @@ async def _do_request(
     request_id: str,
     attempt: int = 0,
     path_override: str | None = None,
+    request_timeout: float | None = None,
 ) -> tuple[dict[str, Any], float]:
     pool = get_pool()
     manager = get_manager()
@@ -166,6 +167,7 @@ async def _do_request(
         method="POST",
         json_body=body,
         request_id=request_id,
+        request_timeout=request_timeout,
     )
     latency = time.monotonic() - start
     if resp.status_code >= 400:
@@ -183,7 +185,10 @@ async def _do_request(
                     attempt=attempt + 1,
                     category=decision.category,
                 )
-                return await _do_request(resolved, protocol, target, body, request_id, attempt=attempt + 1)
+                return await _do_request(
+                    resolved, protocol, target, body, request_id,
+                    attempt=attempt + 1, path_override=path_override, request_timeout=request_timeout,
+                )
         raise UpstreamError(
             status_code=resp.status_code,
             message=f"Upstream error ({decision.category})",
@@ -522,7 +527,8 @@ async def image_generation(
     if resolved is None:
         raise NotFoundError(message=f"Model not found: {model}", request_id=request_id)
     data, latency = await _do_request(
-        resolved, resolved.protocol, resolved.protocol, body, request_id, path_override="images/generations"
+        resolved, resolved.protocol, resolved.protocol, body, request_id,
+        path_override="images/generations", request_timeout=120.0,
     )
     await _record_db_usage(
         agent_type=agent_type,
