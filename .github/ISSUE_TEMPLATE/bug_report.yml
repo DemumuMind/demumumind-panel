@@ -1,0 +1,31 @@
+---
+name: Bug report
+about: Сообщить о проблеме (воспроизводимый шаг + версия окружения)
+title: "[bug] "
+labels: bug
+assignees: ''
+---
+
+## Описание
+
+Что происходит, что ожидалось.
+
+## Шаги воспроизведения
+
+1.
+2.
+3.
+
+## Окружение
+
+- OS:
+- `uv --version`:
+- `python --version`:
+- `pnpm --version`:
+- Версия panel (`GET /health` → `version`):
+
+## Логи
+
+```text
+# релевантные строки из /.sprite/logs/services/demumumind.log
+```
