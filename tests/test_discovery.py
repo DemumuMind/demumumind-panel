@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -23,6 +24,26 @@ def _fake_resp(status_code: int = 200, json: dict | None = None, text: str = "")
         text=text,
         aclose=_aclose,
     )
+
+
+async def _discover_sse(client: AsyncClient, pid: str, test: bool = False) -> dict:
+    """POST discover and return the final `done` event's result from the SSE stream."""
+    r = await client.post(f"/v1/admin/providers/{pid}/discover{'?test=1' if test else ''}", headers=ADMIN_HEADERS)
+    assert r.status_code == 200, r.text
+    result: dict | None = None
+    for line in r.text.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        try:
+            ev = json.loads(data)
+        except Exception:
+            continue
+        if ev.get("event") == "done":
+            result = ev.get("result")
+    assert result is not None, f"no done event in SSE: {r.text[:200]}"
+    return result
 
 
 async def test_parse_openai() -> None:
@@ -92,9 +113,8 @@ async def test_discover_auto_imports_all(client: AsyncClient, monkeypatch) -> No
     assert rp.status_code == 201
     pid = rp.json()["id"]
 
-    r = await client.post(f"/v1/admin/providers/{pid}/discover", headers=ADMIN_HEADERS)
-    assert r.status_code == 200
-    data = r.json()
+    r = await _discover_sse(client, pid)
+    data = r
     assert data["total"] == 2
     assert data["imported"] == 2
     assert data["skipped"] == 0
@@ -122,9 +142,8 @@ async def test_discover_skips_existing(client: AsyncClient, monkeypatch) -> None
     )
     pid = rp.json()["id"]
 
-    await client.post(f"/v1/admin/providers/{pid}/discover", headers=ADMIN_HEADERS)
-    r2 = await client.post(f"/v1/admin/providers/{pid}/discover", headers=ADMIN_HEADERS)
-    data = r2.json()
+    await _discover_sse(client, pid)
+    data = await _discover_sse(client, pid)
     assert data["total"] == 1
     assert data["imported"] == 0
     assert data["skipped"] == 1

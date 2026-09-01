@@ -7,12 +7,14 @@ everywhere. Key POST returns the raw key exactly once.
 from __future__ import annotations
 
 import hmac
+import json
 import uuid
+from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, File, Header, Query, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +38,6 @@ from app.schemas import (
     LoginRequest,
     McpPermissionOut,
     McpServerOut,
-    ModelDiscoveryResult,
     ModelOut,
     PaginatedResponse,
     PluginInvokeRequest,
@@ -45,10 +46,11 @@ from app.schemas import (
     ProviderKeyOut,
     ProviderOut,
     TestProviderResult,
+    UpdateProviderRequest,
 )
 from app.seed import run_seed
 from app.services.cleanup import run_cleanup
-from app.services.discovery import discover_and_test, test_provider_model
+from app.services.discovery import discover_and_test_stream, test_provider_model
 from app.services.plugin_manager import get_plugin_manager, verify_ed25519
 from app.services.pool import get_pool
 from app.services.provider_manager import get_manager
@@ -137,6 +139,21 @@ async def get_provider(
     return ProviderOut.model_validate(await _provider_or_404(session, provider_id))
 
 
+@admin_router.patch("/providers/{provider_id}", response_model=ProviderOut)
+async def update_provider_endpoint(
+    provider_id: str,
+    _: PanelDep,
+    session: SessionDep,
+    body: UpdateProviderRequest,
+) -> ProviderOut:
+    provider = await _provider_or_404(session, provider_id)
+    try:
+        provider = await get_manager().update_provider(session, provider, body)
+    except IntegrityError:
+        raise AppError(409, "duplicate", "Provider update conflict") from None
+    return ProviderOut.model_validate(provider)
+
+
 @admin_router.delete("/providers/{provider_id}")
 async def delete_provider(
     provider_id: str,
@@ -177,16 +194,23 @@ async def test_provider(
         return TestProviderResult(ok=False, models=[], message=str(exc)[:200])
 
 
-@admin_router.post("/providers/{provider_id}/discover", response_model=ModelDiscoveryResult)
+@admin_router.post("/providers/{provider_id}/discover")
 async def discover_provider_models_endpoint(
     provider_id: str,
     _: PanelDep,
     session: SessionDep,
     request: Request,
     test: bool = Query(default=False),
-) -> ModelDiscoveryResult:
+) -> StreamingResponse:
+    """SSE stream of discovery progress (live stages + per-model results)."""
     provider = await _provider_or_404(session, provider_id)
-    return await discover_and_test(provider, session, getattr(request.state, "request_id", ""), test=test)
+    request_id = getattr(request.state, "request_id", "")
+
+    async def _event_stream() -> AsyncIterator[str]:
+        async for event in discover_and_test_stream(provider, session, request_id, test=test):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
 
 @admin_router.post("/providers/{provider_id}/models/{internal_model}/test", response_model=DiscoveredModelStatus)

@@ -10,16 +10,17 @@
 	import {
 		fetchProviders,
 		createProvider,
+		updateProvider,
 		deleteProvider,
 		testProvider,
-		discoverProvider,
+		discoverProviderStream,
 		testProviderModel,
 		fetchProviderKeys,
 		addProviderKey,
 		deleteProviderKey
 	} from '$lib/api';
 	import { showToast } from '$lib/stores';
-	import { Bot, Plus, Trash2, RefreshCw, Play, ChevronDown, ChevronRight, X } from 'lucide-svelte';
+	import { Bot, Plus, Trash2, RefreshCw, Play, ChevronDown, ChevronRight, X, Pencil, Save } from 'lucide-svelte';
 
 	let items = $state<any[]>([]);
 	let expanded = $state<Record<string, boolean>>({});
@@ -27,6 +28,16 @@
 	let busyDiscover = $state<Record<string, boolean>>({});
 	let providerKeys = $state<Record<string, any[]>>({});
 	let newKeys = $state<Record<string, string>>({});
+	let progress = $state<Record<string, any>>({});
+
+	// edit modal state
+	let editingProvider: any = null;
+	let editName = $state('');
+	let editBaseUrl = $state('');
+	let editApiKey = $state('');
+	let editProtocol = $state('openai');
+	let editIsDefault = $state(false);
+	let editIsActive = $state(true);
 
 	let name = $state('');
 	let baseUrl = $state('');
@@ -92,8 +103,20 @@
 
 	async function discover(id: string) {
 		busyDiscover[id] = true;
+		progress[id] = { stage: 'starting', current: 0, total: 0, test: false, results: [] };
 		try {
-			const r = await discoverProvider(id);
+			const r = await discoverProviderStream(id, false, (ev) => {
+				if (ev.event === 'stage') progress[id] = { ...progress[id], stage: ev.stage, total: ev.total ?? progress[id].total };
+				else if (ev.event === 'import') progress[id] = { ...progress[id], current: ev.current, total: ev.total };
+				else if (ev.event === 'test') {
+					progress[id] = {
+						...progress[id],
+						current: ev.current,
+						total: ev.total,
+						results: [...progress[id].results, { model: ev.model, ok: ev.ok, category: ev.category }]
+					};
+				}
+			});
 			discoverResults[id] = r;
 			showToast(`Discover: ${r.total} models imported ${r.imported}`, 'success');
 			await load();
@@ -101,13 +124,26 @@
 			showToast(e.message, 'error');
 		} finally {
 			busyDiscover[id] = false;
+			progress[id] = undefined;
 		}
 	}
 
 	async function testAll(id: string) {
 		busyDiscover[id] = true;
+		progress[id] = { stage: 'starting', current: 0, total: 0, test: true, results: [] };
 		try {
-			const r = await discoverProvider(id, true);
+			const r = await discoverProviderStream(id, true, (ev) => {
+				if (ev.event === 'stage') progress[id] = { ...progress[id], stage: ev.stage, total: ev.total ?? progress[id].total };
+				else if (ev.event === 'import') progress[id] = { ...progress[id], current: ev.current, total: ev.total };
+				else if (ev.event === 'test') {
+					progress[id] = {
+						...progress[id],
+						current: ev.current,
+						total: ev.total,
+						results: [...progress[id].results, { model: ev.model, ok: ev.ok, category: ev.category }]
+					};
+				}
+			});
 			discoverResults[id] = r;
 			showToast(`Test: ${r.ok_count}/${r.total} ok`, r.ok_count > 0 ? 'success' : 'info');
 			await load();
@@ -115,6 +151,7 @@
 			showToast(e.message, 'error');
 		} finally {
 			busyDiscover[id] = false;
+			progress[id] = undefined;
 		}
 	}
 
@@ -122,6 +159,39 @@
 		try {
 			const r = await testProviderModel(providerId, modelName);
 			showToast(`${modelName}: ${r.ok ? 'ok' : r.error || 'failed'}`, r.ok ? 'success' : 'error');
+		} catch (e: any) {
+			showToast(e.message, 'error');
+		}
+	}
+
+	function openEdit(p: any) {
+		editingProvider = p;
+		editName = p.name;
+		editBaseUrl = p.base_url;
+		editApiKey = '';
+		editProtocol = p.protocol;
+		editIsDefault = p.is_default;
+		editIsActive = p.is_active;
+	}
+
+	function closeEdit() {
+		editingProvider = null;
+	}
+
+	async function saveEdit() {
+		if (!editingProvider) return;
+		const data: any = {
+			base_url: editBaseUrl,
+			protocol: editProtocol,
+			is_default: editIsDefault,
+			is_active: editIsActive
+		};
+		if (editApiKey) data.api_key = editApiKey;
+		try {
+			await updateProvider(editingProvider.id, data);
+			showToast('Provider updated', 'success');
+			closeEdit();
+			await load();
 		} catch (e: any) {
 			showToast(e.message, 'error');
 		}
@@ -200,6 +270,7 @@
 					<Badge variant={p.is_active ? 'success' : 'danger'} dot>{p.is_active ? 'active' : 'inactive'}</Badge>
 				</td>
 				<td class="py-2 px-3 text-right space-x-2 whitespace-nowrap">
+					<Button variant="ghost" size="sm" onclick={() => openEdit(p)}><Pencil class="w-3.5 h-3.5" /></Button>
 					<Button variant="ghost" size="sm" onclick={() => discover(p.id)} disabled={busyDiscover[p.id]}>
 						<RefreshCw class="w-3.5 h-3.5" /> {busyDiscover[p.id] ? '…' : 'Discover'}
 					</Button>
@@ -233,6 +304,41 @@
 								<Input placeholder="Add pool API key" bind:value={newKeys[p.id]} class="max-w-sm" />
 								<Button variant="secondary" size="sm" onclick={() => addKey(p.id)} disabled={!newKeys[p.id]}>+ Key</Button>
 							</div>
+
+							{#if progress[p.id]}
+								<div class="mt-3 rounded-lg border border-(--accent)/30 bg-(--accent-soft) p-3">
+									<h3 class="text-xs font-semibold text-(--accent-hover) mb-2 flex items-center gap-2">
+										<RefreshCw class="w-3.5 h-3.5 animate-spin" />
+										{progress[p.id].test ? 'Testing models…' : 'Discovering models…'}
+									</h3>
+									<div class="flex justify-between text-xs text-(--text-muted) mb-1">
+										<span>Stage: {progress[p.id].stage}</span>
+										<span class="tabular-nums">{progress[p.id].current} / {progress[p.id].total}</span>
+									</div>
+									<div class="h-1.5 bg-(--bg-card) rounded-full overflow-hidden mb-2">
+										<div
+											class="h-full bg-gradient-to-r from-(--accent) to-(--accent-2) rounded-full transition-all duration-300"
+											style="width: {progress[p.id].total > 0 ? (progress[p.id].current / progress[p.id].total * 100) : 0}%"
+										></div>
+									</div>
+									{#if progress[p.id].results.length > 0}
+										<div class="flex flex-wrap gap-1 max-h-40 overflow-auto">
+											{#each progress[p.id].results as res}
+												<span class="inline-flex items-center gap-1 rounded bg-(--bg-card) border border-(--border) px-1.5 py-0.5 text-[11px]">
+													{#if res.category === 'premium'}
+														<Badge variant="warning">P</Badge>
+													{:else if res.category === 'rate_limited'}
+														<Badge variant="warning">R</Badge>
+													{:else}
+														<Badge variant={res.ok ? 'success' : 'danger'}>{res.ok ? '✓' : '✗'}</Badge>
+													{/if}
+													<span class="text-(--text-muted)">{res.model}</span>
+												</span>
+											{/each}
+										</div>
+									{/if}
+								</div>
+							{/if}
 
 							{#if discoverResults[p.id]}
 								<h3 class="text-xs font-semibold text-(--text-muted) mt-3 mb-2">
@@ -273,3 +379,45 @@
 		</EmptyState>
 	{/if}
 </Card>
+
+{#if editingProvider}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onclick={closeEdit}>
+		<Card class="w-full max-w-md" onclick={(ev: MouseEvent) => ev.stopPropagation()}>
+			<h2 class="text-sm font-semibold mb-3 text-(--text)">Edit Provider — {editName}</h2>
+			<div class="space-y-3">
+				<div>
+					<label class="text-xs text-(--text-muted) block mb-1">Name</label>
+					<Input value={editName} disabled />
+				</div>
+				<div>
+					<label class="text-xs text-(--text-muted) block mb-1">Base URL</label>
+					<Input bind:value={editBaseUrl} />
+				</div>
+				<div>
+					<label class="text-xs text-(--text-muted) block mb-1">API Key (leave empty to keep)</label>
+					<Input type="password" bind:value={editApiKey} placeholder="••••••••" />
+				</div>
+				<div>
+					<label class="text-xs text-(--text-muted) block mb-1">Protocol</label>
+					<Select bind:value={editProtocol}>
+						<option value="openai">openai</option>
+						<option value="anthropic">anthropic</option>
+						<option value="gemini">gemini</option>
+					</Select>
+				</div>
+				<div class="flex gap-6">
+					<label class="flex items-center gap-2 text-sm text-(--text-muted)">
+						<input type="checkbox" bind:checked={editIsDefault} class="accent-(--accent)" /> Default
+					</label>
+					<label class="flex items-center gap-2 text-sm text-(--text-muted)">
+						<input type="checkbox" bind:checked={editIsActive} class="accent-(--accent)" /> Active
+					</label>
+				</div>
+			</div>
+			<div class="flex gap-2 mt-4">
+				<Button variant="secondary" onclick={closeEdit}>Cancel</Button>
+				<Button onclick={saveEdit} disabled={!editBaseUrl}><Save class="w-4 h-4" /> Save</Button>
+			</div>
+		</Card>
+	</div>
+{/if}
