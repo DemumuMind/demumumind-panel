@@ -131,13 +131,15 @@ async def chat_completion(
     guardrail = get_guardrail()
     guardrail.validate_input(prompt_text)
 
-    cache = get_cache()
     tools = body.get("tools")
     temperature = body.get("temperature")
-    cached = await cache.get(model, prompt_text, temperature, tools)
-    if cached is not None:
-        logger.info("dispatch.cache_hit", model=model, request_id=request_id)
-        return cast(dict[str, Any], json.loads(cached))
+    cacheable = temperature in (None, 0, 0.0) and not body.get("stream")
+    cache = get_cache()
+    if cacheable:
+        cached = await cache.get(model, prompt_text, temperature, tools, key_hash)
+        if cached is not None:
+            logger.info("dispatch.cache_hit", model=model, request_id=request_id)
+            return cast(dict[str, Any], json.loads(cached))
 
     target = normalize_protocol(resolved.protocol)
     translated = translate_request(protocol, target, body, resolved.internal_model)
@@ -147,7 +149,8 @@ async def chat_completion(
     choice_content = (output.get("choices") or [{}])[0].get("message", {}).get("content")
     guardrail.validate_output(_extract_prompt([{"role": "assistant", "content": choice_content}]))
 
-    await cache.set(model, prompt_text, temperature, tools, json.dumps(output, ensure_ascii=False))
+    if cacheable:
+        await cache.set(model, prompt_text, temperature, tools, json.dumps(output, ensure_ascii=False), key_hash)
 
     tokens_in, tokens_out = _tokens_from(data, target)
     record_usage(tokens_in, tokens_out, 0.0, provider_id=resolved.provider_id, agent_type=agent_type)
@@ -176,6 +179,18 @@ async def chat_completion_stream(
     if resolved is None:
         raise NotFoundError(message=f"Model not found: {model}", request_id=request_id)
 
+    prompt_text = _extract_prompt(body.get("messages") or [])
+    tools = body.get("tools")
+    temperature = body.get("temperature")
+    cacheable = temperature in (None, 0, 0.0)
+    cache = get_cache()
+    if cacheable:
+        cached_sse = await cache.get_stream(model, prompt_text, temperature, tools, key_hash)
+        if cached_sse is not None:
+            logger.info("dispatch.stream_cache_hit", model=model, request_id=request_id)
+            yield cached_sse.encode("utf-8")
+            return
+
     target = normalize_protocol(resolved.protocol)
     translated = translate_request(protocol, target, body, resolved.internal_model)
     pool = get_pool()
@@ -200,11 +215,17 @@ async def chat_completion_stream(
             detail=body_text[:300],
             request_id=request_id,
         )
+    sse_chunks: list[bytes] = []
     try:
         async for chunk in resp.aiter_bytes():
+            sse_chunks.append(chunk)
             yield chunk
     finally:
         await resp.aclose()
+        if cacheable and sse_chunks:
+            full_sse = b"".join(sse_chunks).decode("utf-8", errors="replace")
+            await cache.set_stream(model, prompt_text, temperature, tools, full_sse, key_hash)
+            logger.info("dispatch.stream_cached", model=model, request_id=request_id)
         record_latency(time.monotonic() - start, provider_id=resolved.provider_id)
         record_usage(0, 0, 0.0, provider_id=resolved.provider_id, agent_type=agent_type)
         logger.info("dispatch.stream_done", model=model, request_id=request_id)

@@ -17,6 +17,7 @@
 	let busy = $state(false);
 	let temperature = $state('0.7');
 	let maxTokens = $state('256');
+	let cacheEnabled = $state(false);
 
 	let filteredModels = $derived(
 		modelFilter
@@ -50,7 +51,7 @@
 		const messagesForApi = history
 			.slice(0, userIdx + 1)
 			.map((m) => ({ role: m.role, content: m.content }));
-		const temp = parseFloat(temperature.replace(',', '.')) || 0.7;
+		const temp = cacheEnabled ? 0 : parseFloat(temperature.replace(',', '.')) || 0.7;
 		const maxT = parseInt(maxTokens) || undefined;
 		streamIt(messagesForApi, temp, maxT, assistantIdx);
 	}
@@ -61,7 +62,8 @@
 				model: selectedModel,
 				messages: messagesForApi,
 				temperature: temp,
-				max_tokens: maxT
+				max_tokens: maxT,
+				...(cacheEnabled ? { stream_options: { include_usage: true } } : {})
 			})) {
 				if (chunk.content) history[idx].content += chunk.content;
 				if (chunk.reasoning) history[idx].reasoning = (history[idx].reasoning || '') + chunk.reasoning;
@@ -153,6 +155,12 @@
 		<div class="w-full sm:w-24">
 			<label for="pg-max" class="text-xs text-zinc-500 block mb-1">Max tokens</label>
 			<Input id="pg-max" type="number" bind:value={maxTokens} min="1" max="99999" step="1" />
+		</div>
+		<div class="flex items-end gap-2 pb-1">
+			<label class="flex items-center gap-1 text-xs text-zinc-400 cursor-pointer">
+				<input type="checkbox" bind:checked={cacheEnabled} />
+				Cache
+			</label>
 		</div>
 	</div>
 
