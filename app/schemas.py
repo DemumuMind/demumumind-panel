@@ -304,6 +304,9 @@ class AgentUsageOut(BaseModel):
     tokens_out: int
     cost_usd: float
     requests: int
+    free_requests: int = 0
+    unknown_requests: int = 0
+    cached_requests: int = 0
 
 
 class UsageRowOut(BaseModel):
@@ -312,6 +315,9 @@ class UsageRowOut(BaseModel):
     tokens_out: int
     cost_usd: float
     requests: int
+    free_requests: int = 0
+    unknown_requests: int = 0
+    cached_requests: int = 0
 
 
 class UsagePoint(BaseModel):
@@ -320,6 +326,20 @@ class UsagePoint(BaseModel):
     tokens_out: int
     cost_usd: float
     requests: int
+    free_requests: int = 0
+    unknown_requests: int = 0
+    cached_requests: int = 0
+
+
+class ModelPricingUpdate(BaseModel):
+    """Manual pricing/free override for a model (source='manual')."""
+
+    price_prompt_per_token: float | None = None
+    price_completion_per_token: float | None = None
+    price_request: float | None = None
+    free: bool | None = None
+    limit_requests_per_minute: int | None = None
+    limit_requests_per_day: int | None = None
 
 
 class PluginOut(BaseModel):
@@ -418,6 +438,7 @@ __all__ = [
     "AgentUsageOut",
     "UsageRowOut",
     "UsagePoint",
+    "ModelPricingUpdate",
     "PluginOut",
     "PluginInvokeRequest",
     "PluginInvokeResult",

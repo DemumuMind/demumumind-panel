@@ -147,9 +147,15 @@ class AgentUsage(Base):
     provider_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("providers.id", ondelete="SET NULL"), nullable=True
     )
+    model_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("models.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    is_free: Mapped[int] = mapped_column(Integer, default=0)
+    price_known: Mapped[int] = mapped_column(Integer, default=0)
+    cache_hit: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )

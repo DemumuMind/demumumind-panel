@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 
+import sqlalchemy as sa
 import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,16 +55,24 @@ class FinopsService:
         *,
         agent_type: str,
         provider_id: str | None,
+        model_id: str | None = None,
         tokens_in: int,
         tokens_out: int,
         cost_usd: float,
+        is_free: bool = False,
+        price_known: bool = False,
+        cache_hit: bool = False,
     ) -> None:
         row = AgentUsage(
             agent_type=agent_type,
             provider_id=provider_id,
+            model_id=model_id,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             cost_usd=cost_usd,
+            is_free=1 if is_free else 0,
+            price_known=1 if price_known else 0,
+            cache_hit=1 if cache_hit else 0,
         )
         session.add(row)
         await session.commit()
@@ -75,6 +84,9 @@ class FinopsService:
             func.sum(AgentUsage.tokens_out).label("tokens_out"),
             func.sum(AgentUsage.cost_usd).label("cost_usd"),
             func.count(AgentUsage.id).label("requests"),
+            func.coalesce(func.sum(AgentUsage.is_free), 0).label("free_requests"),
+            func.coalesce(func.sum(sa.case((AgentUsage.price_known == 0, 1), else_=0)), 0).label("unknown_requests"),
+            func.coalesce(func.sum(AgentUsage.cache_hit), 0).label("cached_requests"),
         ).group_by(AgentUsage.agent_type)
         total = await session.execute(select(func.count()).select_from(base.subquery()))
         total_count = int(total.scalar_one() or 0)
@@ -86,6 +98,9 @@ class FinopsService:
                 tokens_out=int(r.tokens_out or 0),
                 cost_usd=float(r.cost_usd or 0.0),
                 requests=int(r.requests or 0),
+                free_requests=int(r.free_requests or 0),
+                unknown_requests=int(r.unknown_requests or 0),
+                cached_requests=int(r.cached_requests or 0),
             )
             for r in rows.all()
         ]
@@ -100,6 +115,9 @@ class FinopsService:
             func.sum(AgentUsage.tokens_out).label("tokens_out"),
             func.sum(AgentUsage.cost_usd).label("cost_usd"),
             func.count(AgentUsage.id).label("requests"),
+            func.coalesce(func.sum(AgentUsage.is_free), 0).label("free_requests"),
+            func.coalesce(func.sum(sa.case((AgentUsage.price_known == 0, 1), else_=0)), 0).label("unknown_requests"),
+            func.coalesce(func.sum(AgentUsage.cache_hit), 0).label("cached_requests"),
         ).where(AgentUsage.created_at >= cutoff_naive).group_by("d").order_by("d")
         rows = await session.execute(base)
         return [
@@ -109,6 +127,9 @@ class FinopsService:
                 tokens_out=int(r.tokens_out or 0),
                 cost_usd=float(r.cost_usd or 0.0),
                 requests=int(r.requests or 0),
+                free_requests=int(r.free_requests or 0),
+                unknown_requests=int(r.unknown_requests or 0),
+                cached_requests=int(r.cached_requests or 0),
             )
             for r in rows.all()
         ]
@@ -125,6 +146,11 @@ class FinopsService:
                 func.sum(AgentUsage.tokens_out).label("tokens_out"),
                 func.sum(AgentUsage.cost_usd).label("cost_usd"),
                 func.count(AgentUsage.id).label("requests"),
+                func.coalesce(func.sum(AgentUsage.is_free), 0).label("free_requests"),
+                func.coalesce(
+                    func.sum(sa.case((AgentUsage.price_known == 0, 1), else_=0)), 0
+                ).label("unknown_requests"),
+                func.coalesce(func.sum(AgentUsage.cache_hit), 0).label("cached_requests"),
             )
             .outerjoin(ProviderModel, ProviderModel.id == AgentUsage.provider_id)
             .group_by(AgentUsage.provider_id)
@@ -139,6 +165,9 @@ class FinopsService:
                 tokens_out=int(r.tokens_out or 0),
                 cost_usd=float(r.cost_usd or 0.0),
                 requests=int(r.requests or 0),
+                free_requests=int(r.free_requests or 0),
+                unknown_requests=int(r.unknown_requests or 0),
+                cached_requests=int(r.cached_requests or 0),
             )
             for r in rows.all()
         ]

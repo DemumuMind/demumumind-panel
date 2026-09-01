@@ -185,6 +185,20 @@ export async function deleteModel(id: string) {
 	return del(`/v1/admin/models/${id}`);
 }
 
+export async function updateModelPricing(id: string, data: any) {
+	return request(`/v1/admin/models/${id}/pricing`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(data)
+	}).then(async (res) => {
+		if (!res.ok) {
+			const err = await res.json().catch(() => ({ error: res.statusText }));
+			throw new Error(err.error || res.statusText);
+		}
+		return res.json();
+	});
+}
+
 export async function fetchKeys(limit = 100, offset = 0) {
 	return getJSON<{ items: any[]; total: number }>(`/v1/admin/keys?limit=${limit}&offset=${offset}`);
 }

@@ -176,7 +176,9 @@
 			<label for="pg-model" class="text-xs text-(--text-muted) block mb-1 mt-2">Model</label>
 			<Select id="pg-model" bind:value={selectedModel}>
 				{#each filteredModels as m}
-					<option value={m.user_model_id}>{m.user_model_id} ({m.provider?.name})</option>
+					<option value={m.user_model_id}>
+						{m.user_model_id} ({m.provider?.name}){m.metadata?.free ? ' — FREE' : ''}
+					</option>
 				{/each}
 			</Select>
 			<Input id="pg-filter" type="text" placeholder="Фильтр моделей…" bind:value={modelFilter} class="mt-2" />

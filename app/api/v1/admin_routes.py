@@ -39,6 +39,7 @@ from app.schemas import (
     McpPermissionOut,
     McpServerOut,
     ModelOut,
+    ModelPricingUpdate,
     PaginatedResponse,
     PluginInvokeRequest,
     PluginInvokeResult,
@@ -427,6 +428,22 @@ async def delete_model(
     await session.commit()
     await get_manager().refresh()
     return {"ok": True}
+
+
+@admin_router.patch("/models/{model_id}/pricing", response_model=ModelOut)
+async def update_model_pricing(
+    model_id: str,
+    _: PanelDep,
+    session: SessionDep,
+    body: ModelPricingUpdate,
+) -> ModelOut:
+    """Manual pricing/free/limits override for a model (source='manual')."""
+    model = await _model_or_404(session, model_id)
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        return ModelOut.model_validate(model)
+    model = await get_manager().update_model_pricing(session, model, data)
+    return ModelOut.model_validate(model)
 
 
 @admin_router.get("/keys")
