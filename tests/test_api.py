@@ -12,7 +12,7 @@ async def test_health_ok(client: AsyncClient) -> None:
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ok"
-    assert data["version"] == "0.1.0"
+    assert data["version"] == "0.2.0"
     assert data["checks"]["db"] == "ok"
 
 

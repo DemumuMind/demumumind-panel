@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import McpPermission, McpServer
 from app.services.pool import get_pool
+from app.version import VERSION
 
 logger = structlog.get_logger(__name__)
 
@@ -57,7 +58,7 @@ class McpService:
         return {
             "protocolVersion": protocol_version,
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "demumumind-mcp", "version": "0.1.0"},
+            "serverInfo": {"name": "demumumind-mcp", "version": VERSION},
             "clientCapabilities": capabilities,
         }
 
