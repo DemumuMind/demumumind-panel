@@ -292,6 +292,19 @@ export async function fetchUsageTimeseries(days = 30) {
 	return getJSON<any[]>(`/v1/usage/timeseries?days=${days}`);
 }
 
+export async function fetchImageGenerations(limit = 50, offset = 0) {
+	return getJSON<{ items: any[]; total: number }>(`/v1/admin/images/generations?limit=${limit}&offset=${offset}`);
+}
+
+export async function fetchImageGenerationBlob(id: string): Promise<string> {
+	// Admin file endpoint requires the panel Bearer header — <img> can't send it,
+	// so fetch as a blob and return an object URL for display.
+	const res = await request(`/v1/admin/images/generations/${encodeURIComponent(id)}/file`);
+	if (!res.ok) throw new Error(`Failed to load image: ${res.status}`);
+	const blob = await res.blob();
+	return URL.createObjectURL(blob);
+}
+
 export async function fetchPlugins() {
 	return getJSON<any[]>('/v1/admin/plugins');
 }

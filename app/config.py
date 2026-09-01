@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     PANEL_API_KEY: str = "dev-insecure-panel-key-change-me"
     AUTO_MIGRATE: int = 1
     PLUGIN_PUBLIC_KEY_HEX: str = ""
+    IMAGE_DIR: str = "data/images"
 
     @property
     def is_sqlite(self) -> bool:

@@ -542,6 +542,15 @@ async def image_generation(
         price_known=bool(resolved and resolved.pricing),
         cache_hit=False,
     )
+    await _record_image_generation(
+        agent_type=agent_type,
+        provider_id=resolved.provider_id,
+        model_id=resolved.model_id,
+        prompt=str(body.get("prompt") or ""),
+        size=str(body.get("size") or "1024x1024"),
+        n=int(body.get("n") or 1),
+        data=data,
+    )
     logger.info(
         "dispatch.image_generated",
         model=model,
@@ -550,6 +559,59 @@ async def image_generation(
         request_id=request_id,
     )
     return data
+
+
+async def _record_image_generation(
+    *,
+    agent_type: str,
+    provider_id: str | None,
+    model_id: str | None,
+    prompt: str,
+    size: str,
+    n: int,
+    data: dict[str, Any],
+) -> None:
+    """Persist a generated image: write first b64 payload to disk + DB row."""
+    import base64
+    import uuid as _uuid
+    from pathlib import Path
+
+    from app.config import settings
+    from app.models import ImageGeneration
+
+    items = data.get("data") or []
+    if not items or not isinstance(items, list):
+        return
+    first = items[0]
+    b64 = first.get("b64_json") if isinstance(first, dict) else None
+    if not isinstance(b64, str) or not b64:
+        # URLs are not stored; nothing to persist
+        return
+    img_dir = Path(settings.IMAGE_DIR)
+    img_dir.mkdir(parents=True, exist_ok=True)
+    name = f"{_uuid.uuid4().hex}.png"
+    file_path = img_dir / name
+    try:
+        file_path.write_bytes(base64.b64decode(b64))
+    except Exception:
+        logger.exception("dispatch.image_save_error")
+        return
+    try:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                ImageGeneration(
+                    provider_id=provider_id,
+                    model_id=model_id,
+                    agent_type=agent_type,
+                    prompt=prompt,
+                    size=size,
+                    n=n,
+                    file_path=str(file_path),
+                )
+            )
+            await session.commit()
+    except Exception:
+        logger.exception("dispatch.image_record_error")
 
 
 __all__ = [

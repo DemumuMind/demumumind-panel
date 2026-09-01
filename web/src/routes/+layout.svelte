@@ -19,6 +19,7 @@
 		BarChart3,
 		Puzzle,
 		Cable,
+		Image,
 		LogOut,
 		Menu,
 		X
@@ -62,6 +63,7 @@
 		{ label: 'Keys', href: '/keys', icon: Key },
 		{ label: 'Playground', href: '/playground', icon: Play },
 		{ label: 'Usage', href: '/usage', icon: BarChart3 },
+		{ label: 'Images', href: '/images', icon: Image },
 		{ label: 'Plugins', href: '/plugins', icon: Puzzle },
 		{ label: 'MCP', href: '/mcp', icon: Cable }
 	];

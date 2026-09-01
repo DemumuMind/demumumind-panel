@@ -10,11 +10,12 @@ import hmac
 import json
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, File, Header, Query, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +24,17 @@ from app.api.v1.middleware import AuthState, hash_key
 from app.config import settings
 from app.core.db import get_db
 from app.core.errors import AppError, NotFoundError
-from app.models import ApiKey, McpPermission, McpServer, Model, Plugin, Provider, ProviderKey, ProviderTestRun
+from app.models import (
+    ApiKey,
+    ImageGeneration,
+    McpPermission,
+    McpServer,
+    Model,
+    Plugin,
+    Provider,
+    ProviderKey,
+    ProviderTestRun,
+)
 from app.schemas import (
     ApiKeyCreated,
     ApiKeyOut,
@@ -688,6 +699,63 @@ async def delete_mcp_permission(
     await session.delete(perm)
     await session.commit()
     return {"ok": True}
+
+
+@admin_router.get("/images/generations")
+async def list_image_generations(
+    _: PanelDep,
+    session: SessionDep,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> PaginatedResponse[dict[str, Any]]:
+    total = int(
+        (await session.execute(select(func.count()).select_from(ImageGeneration))).scalar_one() or 0
+    )
+    rows = await session.execute(
+        select(ImageGeneration).order_by(ImageGeneration.created_at.desc()).limit(limit).offset(offset)
+    )
+    items: list[dict[str, Any]] = []
+    for g in rows.scalars().all():
+        provider = await session.execute(
+            select(Provider).where(Provider.id == g.provider_id).limit(1)
+        )
+        prov = provider.scalar_one_or_none()
+        model = await session.execute(
+            select(Model).where(Model.id == g.model_id).limit(1)
+        )
+        mdl = model.scalar_one_or_none()
+        items.append(
+            {
+                "id": g.id,
+                "agent_type": g.agent_type,
+                "prompt": g.prompt,
+                "size": g.size,
+                "n": g.n,
+                "file_path": g.file_path,
+                "created_at": g.created_at.isoformat(),
+                "provider": prov.name if prov else None,
+                "model": mdl.user_model_id if mdl else None,
+            }
+        )
+    return PaginatedResponse[dict[str, Any]](items=items, total=total, limit=limit, offset=offset)
+
+
+@admin_router.get("/images/generations/{generation_id}/file")
+async def get_image_generation_file(
+    generation_id: str,
+    _: PanelDep,
+    session: SessionDep,
+) -> FileResponse:
+    row = await session.execute(
+        select(ImageGeneration).where(ImageGeneration.id == generation_id).limit(1)
+    )
+    gen = row.scalar_one_or_none()
+    if gen is None:
+        raise NotFoundError(message=f"Image generation not found: {generation_id}")
+    path = Path(gen.file_path)
+    if not path.exists():
+        raise NotFoundError(message="Image file missing")
+    return FileResponse(path, media_type="image/png")
 
 
 @admin_router.post("/seed")

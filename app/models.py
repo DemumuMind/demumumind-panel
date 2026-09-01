@@ -181,6 +181,26 @@ class ProviderKey(Base):
     )
 
 
+class ImageGeneration(Base):
+    __tablename__ = "image_generations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    provider_id: Mapped[str] = mapped_column(
+        String, ForeignKey("providers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    model_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("models.id", ondelete="SET NULL"), nullable=True
+    )
+    agent_type: Mapped[str] = mapped_column(String, default="default", index=True)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    size: Mapped[str] = mapped_column(String, default="1024x1024")
+    n: Mapped[int] = mapped_column(Integer, default=1)
+    file_path: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
 class Plugin(Base):
     __tablename__ = "plugins"
 
@@ -225,4 +245,5 @@ __all__ = [
     "ProviderKey",
     "Plugin",
     "ProviderTestRun",
+    "ImageGeneration",
 ]
