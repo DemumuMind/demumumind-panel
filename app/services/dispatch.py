@@ -42,6 +42,10 @@ def _provider_path(protocol: str, model: str) -> str:
         return "v1/messages"
     if proto == "gemini":
         return f"v1beta/models/{model}:generateContent"
+    if proto == "cohere":
+        return "v2/chat"
+    if proto == "ollama":
+        return "api/chat"
     return "chat/completions"
 
 

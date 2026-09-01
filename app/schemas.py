@@ -14,7 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar("T")
 
-ProtocolName = Literal["openai", "anthropic", "gemini", "google", "vertex"]
+ProtocolName = Literal[
+    "openai", "anthropic", "gemini", "google", "vertex",
+    "cohere", "ollama", "azure",
+]
 
 
 class ErrorResponse(BaseModel):

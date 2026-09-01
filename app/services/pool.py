@@ -17,8 +17,11 @@ logger = structlog.get_logger(__name__)
 
 _PROTOCOL_HEADERS = {
     "openai": ("Authorization", "Bearer {key}"),
+    "azure": ("api-key", "{key}"),
     "anthropic": ("x-api-key", "{key}"),
     "gemini": ("x-goog-api-key", "{key}"),
+    "cohere": ("Authorization", "Bearer {key}"),
+    "ollama": ("Authorization", "Bearer {key}"),
 }
 
 

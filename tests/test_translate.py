@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from app.services.translate import (
     anthropic_to_openai,
+    cohere_to_openai,
     gemini_to_openai,
+    ollama_to_openai,
     openai_to_anthropic,
+    openai_to_cohere,
     openai_to_gemini,
+    openai_to_ollama,
     translate_request,
     translate_response,
 )
@@ -266,3 +270,50 @@ def test_translate_response_gemini_function_call() -> None:
     msg = out["choices"][0]["message"]
     assert msg["tool_calls"][0]["function"]["name"] == "weather"
     assert msg["tool_calls"][0]["function"]["arguments"] == '{"city": "x"}'
+
+
+# --- Cohere ---
+
+
+def test_openai_to_cohere_basic() -> None:
+    body = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "temperature": 0.5, "stream": True}
+    out = openai_to_cohere(body)
+    assert out["model"] == "m"
+    assert out["messages"][0]["content"] == "hi"
+    assert out["stream"] is True
+
+
+def test_cohere_to_openai_response() -> None:
+    body = {
+        "message": {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+        "finish_reason": "COMPLETE",
+        "usage": {"tokens": {"input_tokens": 5, "output_tokens": 3}},
+    }
+    out = cohere_to_openai(body)
+    assert out["choices"][0]["message"]["content"] == "hello"
+    assert out["usage"]["prompt_tokens"] == 5
+    assert out["usage"]["completion_tokens"] == 3
+
+
+# --- Ollama ---
+
+
+def test_openai_to_ollama_basic() -> None:
+    body = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "temperature": 0.7, "stream": True}
+    out = openai_to_ollama(body)
+    assert out["messages"][0]["content"] == "hi"
+    assert out["options"]["temperature"] == 0.7
+    assert out["stream"] is True
+
+
+def test_ollama_to_openai_response() -> None:
+    body = {
+        "message": {"role": "assistant", "content": "ok"},
+        "done_reason": "stop",
+        "prompt_eval_count": 10,
+        "eval_count": 5,
+    }
+    out = ollama_to_openai(body)
+    assert out["choices"][0]["message"]["content"] == "ok"
+    assert out["usage"]["prompt_tokens"] == 10
+    assert out["usage"]["completion_tokens"] == 5

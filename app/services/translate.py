@@ -18,6 +18,8 @@ def normalize_protocol(protocol: str) -> str:
     p = protocol.strip().lower()
     if p in ("google", "vertex"):
         return "gemini"
+    if p in ("azure", "mistral", "xai", "groq", "together", "deepseek"):
+        return "openai"  # all OpenAI-compatible; azure differs only in auth header
     return p
 
 
@@ -479,6 +481,162 @@ def gemini_to_openai(body: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def openai_to_cohere(body: dict[str, Any]) -> dict[str, Any]:
+    """OpenAI chat -> Cohere v2 /chat.
+
+    Cohere messages keep openai-ish roles (system/user/assistant/tool),
+    content may be a string or a list of blocks; tools are the openai
+    function shape. Response returns message.content as a list.
+    """
+    body = copy.deepcopy(body)
+    out: dict[str, Any] = {
+        "model": body.get("model", ""),
+        "messages": body.get("messages") or [],
+    }
+    for k in ("temperature", "max_tokens", "stop_sequences", "p", "k", "seed",
+              "frequency_penalty", "presence_penalty", "response_format", "thinking"):
+        if body.get(k) is not None:
+            out[k] = body[k]
+    stop = body.get("stop")
+    if isinstance(stop, str):
+        out["stop_sequences"] = [stop]
+    elif isinstance(stop, list):
+        out["stop_sequences"] = stop
+    if body.get("top_p") is not None and "p" not in out:
+        out["p"] = body["top_p"]
+    if body.get("tools"):
+        out["tools"] = body["tools"]
+    if body.get("tool_choice"):
+        tc = body["tool_choice"]
+        if isinstance(tc, dict) and tc.get("type") == "function":
+            out["tool_choice"] = "REQUIRED"
+        elif tc == "none":
+            out["tool_choice"] = "NONE"
+    out["stream"] = bool(body.get("stream"))
+    return out
+
+
+def cohere_to_openai(body: dict[str, Any]) -> dict[str, Any]:
+    """Cohere v2 /chat response -> OpenAI chat.completion."""
+    out: dict[str, Any] = {}
+    message = body.get("message") or {}
+    content = message.get("content")
+    text = ""
+    tool_calls: list[dict[str, Any]] = []
+    if isinstance(content, list):
+        for b in content:
+            if isinstance(b, dict):
+                if b.get("type") == "text":
+                    text += b.get("text", "")
+                elif b.get("type") == "thinking":
+                    pass
+    elif isinstance(content, str):
+        text = content
+    for tc in (message.get("tool_calls") or []):
+        fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+        args = fn.get("arguments")
+        tool_calls.append({
+            "id": tc.get("id", ""),
+            "type": "function",
+            "function": {
+                "name": fn.get("name", ""),
+                "arguments": args if isinstance(args, str) else json.dumps(args or {}),
+            },
+        })
+    msg: dict[str, Any] = {"role": "assistant", "content": text}
+    if tool_calls:
+        msg["tool_calls"] = tool_calls
+    fr = (body.get("finish_reason") or "COMPLETE").lower()
+    finish_map = {"stop_sequence": "stop", "complete": "stop", "max_tokens": "length", "tool_call": "tool_calls"}
+    finish = finish_map.get(fr, fr)
+    out["choices"] = [{"index": 0, "message": msg, "finish_reason": finish}]
+    tokens = (body.get("usage") or {}).get("tokens") or {}
+    out["usage"] = {
+        "prompt_tokens": tokens.get("input_tokens", 0),
+        "completion_tokens": tokens.get("output_tokens", 0),
+        "total_tokens": tokens.get("input_tokens", 0) + tokens.get("output_tokens", 0),
+    }
+    return out
+
+
+def openai_to_ollama(body: dict[str, Any]) -> dict[str, Any]:
+    """OpenAI chat -> Ollama /api/chat.
+
+    Messages keep openai roles; images move from content image_url parts
+    to message.images (base64). Params nest under `options`.
+    """
+    body = copy.deepcopy(body)
+    out: dict[str, Any] = {
+        "model": body.get("model", ""),
+        "messages": [],
+        "stream": bool(body.get("stream")),
+    }
+    for msg in body.get("messages") or []:
+        m = dict(msg)
+        content = m.get("content")
+        images: list[str] = []
+        if isinstance(content, list):
+            text_parts: list[str] = []
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "text":
+                    text_parts.append(b.get("text", ""))
+                elif isinstance(b, dict) and b.get("type") == "image_url":
+                    url = (b.get("image_url") or {}).get("url", "") if isinstance(b.get("image_url"), dict) else ""
+                    if url.startswith("data:"):
+                        images.append(url.split(",", 1)[-1] if "," in url else url)
+                    else:
+                        images.append(url)
+            m["content"] = "\n".join(p for p in text_parts if p)
+            if images:
+                m["images"] = images
+        out["messages"].append(m)
+    options: dict[str, Any] = {}
+    for k, v in (("temperature", body.get("temperature")), ("top_p", body.get("top_p")),
+                 ("seed", body.get("seed")), ("num_predict", body.get("max_tokens")),
+                 ("repeat_penalty", body.get("frequency_penalty"))):
+        if v is not None:
+            options[k] = v
+    if options:
+        out["options"] = options
+    if body.get("format"):
+        out["format"] = body["format"]
+    if body.get("tools"):
+        out["tools"] = body["tools"]
+    return out
+
+
+def ollama_to_openai(body: dict[str, Any]) -> dict[str, Any]:
+    """Ollama /api/chat response -> OpenAI chat.completion."""
+    message = body.get("message") or {}
+    content = message.get("content") or ""
+    tool_calls: list[dict[str, Any]] = []
+    for tc in (message.get("tool_calls") or []):
+        fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+        args = fn.get("arguments")
+        tool_calls.append({
+            "id": fn.get("name", ""),
+            "type": "function",
+            "function": {
+                "name": fn.get("name", ""),
+                "arguments": args if isinstance(args, str) else json.dumps(args or {}),
+            },
+        })
+    msg: dict[str, Any] = {"role": "assistant", "content": content}
+    if tool_calls:
+        msg["tool_calls"] = tool_calls
+    dr = (body.get("done_reason") or "").lower()
+    finish = {"stop": "stop", "length": "length", "tool_calls": "tool_calls"}.get(dr, dr or "stop")
+    out: dict[str, Any] = {
+        "choices": [{"index": 0, "message": msg, "finish_reason": finish}],
+        "usage": {
+            "prompt_tokens": body.get("prompt_eval_count", 0),
+            "completion_tokens": body.get("eval_count", 0),
+            "total_tokens": body.get("prompt_eval_count", 0) + body.get("eval_count", 0),
+        },
+    }
+    return out
+
+
 def translate_request(protocol_from: str, protocol_to: str, body: dict[str, Any], model: str) -> dict[str, Any]:
     src = normalize_protocol(protocol_from)
     dst = normalize_protocol(protocol_to)
@@ -490,97 +648,154 @@ def translate_request(protocol_from: str, protocol_to: str, body: dict[str, Any]
         out = openai_to_anthropic(body)
     elif src == "openai" and dst == "gemini":
         out = openai_to_gemini(body)
+    elif src == "openai" and dst == "cohere":
+        out = openai_to_cohere(body)
+    elif src == "openai" and dst == "ollama":
+        out = openai_to_ollama(body)
     elif src == "anthropic" and dst == "openai":
         out = anthropic_to_openai(body)
     elif src == "gemini" and dst == "openai":
         out = gemini_to_openai(body)
+    elif src == "cohere" and dst == "openai":
+        out = cohere_to_openai(body)
+    elif src == "ollama" and dst == "openai":
+        out = ollama_to_openai(body)
+    elif src == "anthropic" and dst == "gemini":
+        out = openai_to_gemini(anthropic_to_openai(body))
+    elif src == "gemini" and dst == "anthropic":
+        out = openai_to_anthropic(gemini_to_openai(body))
+    elif src == "cohere" and dst == "anthropic":
+        out = openai_to_anthropic(cohere_to_openai(body))
+    elif src == "anthropic" and dst == "cohere":
+        out = openai_to_cohere(anthropic_to_openai(body))
+    elif src == "cohere" and dst == "gemini":
+        out = openai_to_gemini(cohere_to_openai(body))
+    elif src == "gemini" and dst == "cohere":
+        out = openai_to_cohere(gemini_to_openai(body))
+    elif src == "ollama" and dst == "anthropic":
+        out = openai_to_anthropic(ollama_to_openai(body))
+    elif src == "anthropic" and dst == "ollama":
+        out = openai_to_ollama(anthropic_to_openai(body))
+    elif src == "ollama" and dst == "gemini":
+        out = openai_to_gemini(ollama_to_openai(body))
+    elif src == "gemini" and dst == "ollama":
+        out = openai_to_ollama(gemini_to_openai(body))
+    elif src == "cohere" and dst == "ollama":
+        out = openai_to_ollama(cohere_to_openai(body))
+    elif src == "ollama" and dst == "cohere":
+        out = openai_to_cohere(ollama_to_openai(body))
     else:
         out = copy.deepcopy(body)
     out["model"] = model
     return out
 
 
+def _anthropic_response_to_openai(body: dict[str, Any]) -> dict[str, Any]:
+    out = copy.deepcopy(body)
+    text = ""
+    content = out.get("content")
+    tool_calls: list[dict[str, Any]] = []
+    if isinstance(content, list):
+        text = "\n".join(
+            _text_of(b.get("text")) for b in content if isinstance(b, dict) and b.get("type") == "text"
+        )
+        tool_calls = [
+            {
+                "id": b.get("id", ""),
+                "type": "function",
+                "function": {
+                    "name": b.get("name", ""),
+                    "arguments": json.dumps(b.get("input", {})),
+                },
+            }
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "tool_use"
+        ]
+    else:
+        text = _text_of(content)
+    message: dict[str, Any] = {"role": "assistant", "content": text}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    out["choices"] = [{"index": 0, "message": message, "finish_reason": out.get("stop_reason", "stop")}]
+    out["usage"] = {
+        "prompt_tokens": (out.get("usage") or {}).get("input_tokens", 0),
+        "completion_tokens": (out.get("usage") or {}).get("output_tokens", 0),
+        "total_tokens": (
+            (out.get("usage") or {}).get("input_tokens", 0)
+            + (out.get("usage") or {}).get("output_tokens", 0)
+        ),
+    }
+    out.pop("content", None)
+    return out
+
+
+def _gemini_response_to_openai(body: dict[str, Any]) -> dict[str, Any]:
+    out = copy.deepcopy(body)
+    text = ""
+    tool_calls_list: list[dict[str, Any]] = []
+    candidates = out.get("candidates") or []
+    if candidates:
+        parts = candidates[0].get("content", {}).get("parts") or []
+        for p in parts:
+            if not isinstance(p, dict):
+                continue
+            if "text" in p:
+                text += p.get("text", "")
+            elif "functionCall" in p:
+                fc = p["functionCall"]
+                tool_calls_list.append(
+                    {
+                        "id": fc.get("name", ""),
+                        "type": "function",
+                        "function": {"name": fc.get("name", ""), "arguments": json.dumps(fc.get("args", {}))},
+                    }
+                )
+    message: dict[str, Any] = {"role": "assistant", "content": text}
+    if tool_calls_list:
+        message["tool_calls"] = tool_calls_list
+    out["choices"] = [{"index": 0, "message": message, "finish_reason": "stop"}]
+    usage = out.get("usageMetadata") or {}
+    out["usage"] = {
+        "prompt_tokens": usage.get("promptTokenCount", 0),
+        "completion_tokens": usage.get("candidatesTokenCount", 0),
+        "total_tokens": usage.get("totalTokenCount", 0),
+    }
+    return out
+
+
+_TO_OPENAI = {
+    "anthropic": _anthropic_response_to_openai,
+    "gemini": _gemini_response_to_openai,
+    "cohere": cohere_to_openai,
+    "ollama": ollama_to_openai,
+}
+_FROM_OPENAI = {
+    "anthropic": openai_to_anthropic,
+    "gemini": openai_to_gemini,
+    "cohere": openai_to_cohere,
+    "ollama": openai_to_ollama,
+}
+
+
 def translate_response(protocol_from: str, protocol_to: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Translate a provider response into the client-facing protocol.
+
+    All responses are first normalized to the OpenAI chat.completion shape
+    (the panel's canonical internal form), then re-emitted in the target
+    protocol. Covers every (src, dst) pair among openai/anthropic/gemini/
+    cohere/ollama.
+    """
     src = normalize_protocol(protocol_from)
     dst = normalize_protocol(protocol_to)
     if src == dst:
         return copy.deepcopy(body)
-    out = copy.deepcopy(body)
-    if src == "anthropic" and dst == "openai":
-        text = ""
-        content = out.get("content")
-        tool_calls: list[dict[str, Any]] = []
-        if isinstance(content, list):
-            text = "\n".join(
-                _text_of(b.get("text")) for b in content if isinstance(b, dict) and b.get("type") == "text"
-            )
-            tool_calls = [
-                {
-                    "id": b.get("id", ""),
-                    "type": "function",
-                    "function": {
-                        "name": b.get("name", ""),
-                        "arguments": json.dumps(b.get("input", {})),
-                    },
-                }
-                for b in content
-                if isinstance(b, dict) and b.get("type") == "tool_use"
-            ]
-        else:
-            text = _text_of(content)
-        message: dict[str, Any] = {"role": "assistant", "content": text}
-        if tool_calls:
-            message["tool_calls"] = tool_calls
-        out["choices"] = [
-            {
-                "index": 0,
-                "message": message,
-                "finish_reason": out.get("stop_reason", "stop"),
-            }
-        ]
-        out["usage"] = {
-            "prompt_tokens": (out.get("usage") or {}).get("input_tokens", 0),
-            "completion_tokens": (out.get("usage") or {}).get("output_tokens", 0),
-            "total_tokens": (
-                (out.get("usage") or {}).get("input_tokens", 0)
-                + (out.get("usage") or {}).get("output_tokens", 0)
-            ),
-        }
-        out.pop("content", None)
-    elif src == "gemini" and dst == "openai":
-        text = ""
-        tool_calls = []
-        candidates = out.get("candidates") or []
-        if candidates:
-            parts = candidates[0].get("content", {}).get("parts") or []
-            for p in parts:
-                if not isinstance(p, dict):
-                    continue
-                if "text" in p:
-                    text += p.get("text", "")
-                elif "functionCall" in p:
-                    fc = p["functionCall"]
-                    tool_calls.append(
-                        {
-                            "id": fc.get("name", ""),
-                            "type": "function",
-                            "function": {
-                                "name": fc.get("name", ""),
-                                "arguments": json.dumps(fc.get("args", {})),
-                            },
-                        }
-                    )
-        message = {"role": "assistant", "content": text}
-        if tool_calls:
-            message["tool_calls"] = tool_calls
-        out["choices"] = [{"index": 0, "message": message, "finish_reason": "stop"}]
-        usage = out.get("usageMetadata") or {}
-        out["usage"] = {
-            "prompt_tokens": usage.get("promptTokenCount", 0),
-            "completion_tokens": usage.get("candidatesTokenCount", 0),
-            "total_tokens": usage.get("totalTokenCount", 0),
-        }
-    return out
+    if src == "openai":
+        canonical = copy.deepcopy(body)
+    else:
+        canonical = _TO_OPENAI[src](body) if src in _TO_OPENAI else copy.deepcopy(body)
+    if dst == "openai":
+        return canonical
+    return _FROM_OPENAI[dst](canonical) if dst in _FROM_OPENAI else canonical
 
 
 __all__ = [

@@ -336,6 +336,9 @@
 		<option value="gemini">gemini</option>
 		<option value="google">google</option>
 		<option value="vertex">vertex</option>
+		<option value="cohere">cohere</option>
+		<option value="ollama">ollama</option>
+		<option value="azure">azure</option>
 	</Select>
 		<label class="flex items-center gap-2 text-sm text-(--text-muted)">
 			<input type="checkbox" bind:checked={isDefault} class="accent-(--accent)" /> Default
