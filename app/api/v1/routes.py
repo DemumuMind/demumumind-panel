@@ -197,4 +197,13 @@ async def list_usage(
         return await get_finops().usage_stats(session, limit, offset)
 
 
+@v1_router.get("/usage/timeseries")
+async def usage_timeseries(
+    key_hash: KeyHashDep,
+    days: int = Query(default=30, ge=1, le=365),
+) -> list[Any]:
+    async with AsyncSessionLocal() as session:
+        return await get_finops().usage_timeseries(session, days)
+
+
 __all__ = ["root_router", "v1_router", "limiter"]

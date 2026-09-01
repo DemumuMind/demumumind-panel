@@ -187,6 +187,10 @@ export async function fetchUsage(limit = 100, offset = 0) {
 	return getJSON<{ items: any[]; total: number }>(`/v1/usage?limit=${limit}&offset=${offset}`);
 }
 
+export async function fetchUsageTimeseries(days = 30) {
+	return getJSON<any[]>(`/v1/usage/timeseries?days=${days}`);
+}
+
 export async function fetchPlugins() {
 	return getJSON<any[]>('/v1/admin/plugins');
 }

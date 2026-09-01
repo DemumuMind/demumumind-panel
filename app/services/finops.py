@@ -8,13 +8,15 @@ or the caller's X-Agent-Type. check_budget raises BudgetError when spent
 
 from __future__ import annotations
 
+import datetime
+
 import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BudgetError
 from app.models import AgentUsage, ApiKey
-from app.schemas import AgentUsageOut, PaginatedResponse
+from app.schemas import AgentUsageOut, PaginatedResponse, UsagePoint
 
 logger = structlog.get_logger(__name__)
 
@@ -88,6 +90,28 @@ class FinopsService:
             for r in rows.all()
         ]
         return PaginatedResponse[AgentUsageOut](items=items, total=total_count, limit=limit, offset=offset)
+
+    async def usage_timeseries(self, session: AsyncSession, days: int = 30) -> list[UsagePoint]:
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
+        cutoff_naive = cutoff.replace(tzinfo=None)
+        base = select(
+            func.date(AgentUsage.created_at).label("d"),
+            func.sum(AgentUsage.tokens_in).label("tokens_in"),
+            func.sum(AgentUsage.tokens_out).label("tokens_out"),
+            func.sum(AgentUsage.cost_usd).label("cost_usd"),
+            func.count(AgentUsage.id).label("requests"),
+        ).where(AgentUsage.created_at >= cutoff_naive).group_by("d").order_by("d")
+        rows = await session.execute(base)
+        return [
+            UsagePoint(
+                date=str(r.d),
+                tokens_in=int(r.tokens_in or 0),
+                tokens_out=int(r.tokens_out or 0),
+                cost_usd=float(r.cost_usd or 0.0),
+                requests=int(r.requests or 0),
+            )
+            for r in rows.all()
+        ]
 
 
 _finops: FinopsService | None = None
