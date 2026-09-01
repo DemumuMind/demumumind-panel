@@ -88,7 +88,6 @@ async def metrics() -> PlainTextResponse:
 
 
 @v1_router.post("/chat/completions")
-@limiter.limit("100/minute")
 async def chat_completions(
     request: Request,
     body: ChatCompletionRequest,
